@@ -45,28 +45,29 @@ int main(void) {
     {
       continue; // skipping to next iteration
     }
-    
-    //parsing the input string into command structure
-    parse_command(input, &cmd);
-    
-    //validating the parsed command
-    if (!validate_command(&cmd)) 
-    {
-      //validation failed, error message already printed
-      continue; //skipping to next iteration
-    }
-    
-    //checking if command is a built-in
-    if (is_builtin(cmd.command)) 
-    {
-      //executing built-in command in parent process
-      execute_builtin(&cmd);
-    } 
-    else 
-    {
-      //executing external command in child process
-      execute_command(&cmd);
-    }
+  if (strchr(input, '|') != NULL) {
+  Pipeline p;
+  parse_pipeline(input, &p);
+
+  if (!validate_pipeline(&p)) {
+    continue;
+  }
+
+  execute_pipeline(&p);
+} else {
+  // existing single-command behavior
+  parse_command(input, &cmd);
+
+  if (!validate_command(&cmd)) {
+    continue;
+  }
+
+  if (is_builtin(cmd.command)) {
+    execute_builtin(&cmd); // parent builtin (cd affects shell) — like real shells
+  } else {
+    execute_command(&cmd);
+  }
+}
   }
   
   //exiting shell successfully

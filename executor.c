@@ -134,7 +134,11 @@ void execute_command(Command *cmd)
       
       //if execvp returns, it failed
       //exiting with 127 for command not found (standard shell convention)
-      perror(cmd->command);
+      if (errno == ENOENT) {
+	  fprintf(stderr, "Command not found.\n");
+	} else {
+ 	 perror(cmd->command);
+	}
       _exit(127);
       
     default:
@@ -158,3 +162,193 @@ void execute_command(Command *cmd)
       break;
   }
 }
+
+static int command_exists(const char *cmd)
+{
+  if (!cmd || cmd[0] == '\0') return 0;
+
+  // If command contains '/', treat as a path (./prog, /bin/ls, etc.)
+  if (strchr(cmd, '/')) {
+    return (access(cmd, X_OK) == 0);
+  }
+
+  // Search PATH
+  const char *path_env = getenv("PATH");
+  if (!path_env) return 0;
+
+  // Make a copy because strtok modifies
+  char path_copy[4096];
+  strncpy(path_copy, path_env, sizeof(path_copy) - 1);
+  path_copy[sizeof(path_copy) - 1] = '\0';
+
+  char *dir = strtok(path_copy, ":");
+  while (dir) {
+    char full[4096];
+    snprintf(full, sizeof(full), "%s/%s", dir, cmd);
+    if (access(full, X_OK) == 0) return 1;
+    dir = strtok(NULL, ":");
+  }
+  return 0;
+}
+
+int validate_pipeline(Pipeline *p)
+{
+  if (p->has_error) {
+    fprintf(stderr, "Error: %s\n", p->error_msg);
+    return 0;
+  }
+
+  if (p->count <= 0) {
+    fprintf(stderr, "Error: No command specified.\n");
+    return 0;
+  }
+
+  // Validate each command like a real shell would
+  for (int i = 0; i < p->count; i++) {
+    Command *c = &p->cmds[i];
+
+    // parse-level error (should already be bubbled up)
+    if (c->has_error) {
+      fprintf(stderr, "Error: %s\n", c->error_msg);
+      return 0;
+    }
+
+    if (c->command == NULL) {
+      fprintf(stderr, "Error: No command specified.\n");
+      return 0;
+    }
+
+    // Input file existence check (if specified)
+    if (c->input_file != NULL) {
+      int fd = open(c->input_file, O_RDONLY);
+      if (fd == -1) {
+        perror(c->input_file);
+        return 0;
+      }
+      close(fd);
+    }
+
+    // Validate command existence for pipeline sequences
+    // (We allow builtins too; they "exist" even if not in PATH)
+    if (!is_builtin(c->command) && !command_exists(c->command)) {
+      if (p->count == 1) {
+        fprintf(stderr, "Command not found.\n");
+      } else {
+        fprintf(stderr, "Command not found in pipe sequence.\n");
+      }
+      return 0;
+    }
+  }
+
+  return 1;
+}
+
+void execute_pipeline(Pipeline *p)
+{
+  int n = p->count;
+
+  // create n-1 pipes
+  int pipes[MAX_CMDS - 1][2];
+  for (int i = 0; i < n - 1; i++) {
+    if (pipe(pipes[i]) == -1) {
+      perror("pipe");
+      return;
+    }
+  }
+
+  pid_t pids[MAX_CMDS];
+
+  for (int i = 0; i < n; i++) {
+    pid_t pid = fork();
+    if (pid == -1) {
+      perror("fork failed");
+      // Close pipes in parent on failure
+      for (int k = 0; k < n - 1; k++) {
+        close(pipes[k][0]);
+        close(pipes[k][1]);
+      }
+      return;
+    }
+
+    if (pid == 0) {
+      // CHILD
+
+      // If not first, connect stdin to previous pipe read end
+      if (i > 0) {
+        if (dup2(pipes[i - 1][0], STDIN_FILENO) == -1) {
+          perror("dup2 pipe stdin");
+          _exit(1);
+        }
+      }
+
+      // If not last, connect stdout to current pipe write end
+      if (i < n - 1) {
+        if (dup2(pipes[i][1], STDOUT_FILENO) == -1) {
+          perror("dup2 pipe stdout");
+          _exit(1);
+        }
+      }
+
+      // Close all pipe fds in child after dup2
+      for (int k = 0; k < n - 1; k++) {
+        close(pipes[k][0]);
+        close(pipes[k][1]);
+      }
+
+      Command *c = &p->cmds[i];
+
+      // Apply redirections AFTER pipe hookups so redirection overrides pipe (matches real shells)
+      if (c->input_file != NULL) {
+        int fd_in = open(c->input_file, O_RDONLY);
+        if (fd_in == -1) { perror(c->input_file); _exit(1); }
+        if (dup2(fd_in, STDIN_FILENO) == -1) { perror("dup2 input"); close(fd_in); _exit(1); }
+        close(fd_in);
+      }
+
+      if (c->output_file != NULL) {
+        int fd_out = open(c->output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd_out == -1) { perror(c->output_file); _exit(1); }
+        if (dup2(fd_out, STDOUT_FILENO) == -1) { perror("dup2 output"); close(fd_out); _exit(1); }
+        close(fd_out);
+      }
+
+      if (c->error_file != NULL) {
+        int fd_err = open(c->error_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd_err == -1) { perror(c->error_file); _exit(1); }
+        if (dup2(fd_err, STDERR_FILENO) == -1) { perror("dup2 error"); close(fd_err); _exit(1); }
+        close(fd_err);
+      }
+
+      // Builtins inside pipeline run in child (subshell behavior)
+      if (is_builtin(c->command)) {
+        int rc = execute_builtin(c);
+        _exit(rc);
+      }
+
+      execvp(c->command, c->args);
+
+      if (errno == ENOENT) {
+        fprintf(stderr, "Command not found.\n");
+      } else {
+        perror(c->command);
+      }
+      _exit(127);
+    }
+
+    // PARENT
+    pids[i] = pid;
+  }
+
+  // Parent closes all pipe fds
+  for (int k = 0; k < n - 1; k++) {
+    close(pipes[k][0]);
+    close(pipes[k][1]);
+  }
+
+  // Wait for all children so prompt returns correctly after pipeline completes
+  for (int i = 0; i < n; i++) {
+    int status;
+    waitpid(pids[i], &status, 0);
+  }
+}
+
