@@ -1,6 +1,6 @@
 #include "myshell.h"
 
-//helper function to check if a token is a redirection operator
+//checking if a token is a redirection operator
 //returns 1 if it's a redirection operator, 0 otherwise
 int is_redirection_operator(char *token) 
 {
@@ -17,7 +17,7 @@ int is_redirection_operator(char *token)
   return 0;
 }
 
-//function for parsing input string into Command structure
+//parsing input string into command structure
 void parse_command(char *input, Command *cmd) 
 {
   int arg_index = 0; //index for arguments array
@@ -162,15 +162,17 @@ void parse_command(char *input, Command *cmd)
   //null-terminating the arguments array for execvp()
   cmd->args[arg_index] = NULL;
 }
-/* added by Aysa */
+
+//trimming leading and trailing whitespace from a string in-place
+//returns pointer to the trimmed string
 static char *trim_inplace(char *s)
 {
   if (!s) return s;
 
-  //trim leading spaces
+  //trimming leading spaces and tabs
   while (*s == ' ' || *s == '\t') s++;
 
-  //trim trailing spaces
+  //trimming trailing spaces and tabs
   size_t len = strlen(s);
   while (len > 0 && (s[len - 1] == ' ' || s[len - 1] == '\t')) 
   {
@@ -180,16 +182,17 @@ static char *trim_inplace(char *s)
   return s;
 }
 
+//parsing pipeline of commands separated by pipe operator
 void parse_pipeline(char *input, Pipeline *p)
 {
-  //init pipeline
+  //initializing pipeline structure
   p->count = 0;
   p->has_error = 0;
   p->error_msg[0] = '\0';
 
-  //split by '|' in-place.
-  //we also detect: command1 |   (missing after pipe)
-  //and: command1 | | command2  (empty between pipes)
+  //splitting input by '|' in-place while detecting errors
+  //detecting: command1 | (missing after pipe)
+  //detecting: command1 | | command2 (empty between pipes)
   char *cursor = input;
   char *segment_start = input;
 
@@ -204,16 +207,17 @@ void parse_pipeline(char *input, Pipeline *p)
 
       if (seg[0] == '\0') 
       {
-        //empty segment
+        //empty segment detected
         if (saved == '\0') 
         {
-          //ends with pipe or whole line empty (but main already filters empty input)
+          //input ends with pipe or empty line
           p->has_error = 1;
           strcpy(p->error_msg, "Command missing after pipe.");
           return;
         } 
         else 
         {
+          //consecutive pipes detected
           p->has_error = 1;
           strcpy(p->error_msg, "Empty command between pipes.");
           return;
@@ -228,10 +232,10 @@ void parse_pipeline(char *input, Pipeline *p)
         return;
       }
 
-      //parsing this segment into a command (reuses our existing redirection parsing)
+      //parsing this segment into a command
       parse_command(seg, &p->cmds[p->count]);
 
-      //if parse_command itself found an error, bubble it up
+      //checking if parse_command found an error and bubbling it up
       if (p->cmds[p->count].has_error) 
       {
         p->has_error = 1;
@@ -244,7 +248,7 @@ void parse_pipeline(char *input, Pipeline *p)
 
       if (saved == '\0') 
       {
-        break; //end of input
+        break; //reaching end of input
       }
 
       //moving to next segment
@@ -255,7 +259,5 @@ void parse_pipeline(char *input, Pipeline *p)
 
     cursor++;
   }
-
-  //if input ends with a pipe, we would have produced an empty final segment
 }
 

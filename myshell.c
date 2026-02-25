@@ -41,11 +41,13 @@ int main(void)
       break; //exiting shell loop
     }
     
-    //checking for empty input (user just pressed Enter)
+    //checking for empty input (user just pressed enter)
     if (strlen(input) == 0) 
     {
       continue; //skipping to next iteration
     }
+    
+    //checking if input contains pipe operator
     if (strchr(input, '|') != NULL) 
     {
       Pipeline p;
@@ -56,12 +58,11 @@ int main(void)
         continue;
       }
 
-    execute_pipeline(&p);
+      execute_pipeline(&p);
     } 
-
-  else 
+    else 
     {
-      //existing single-command behavior
+      //handling single-command execution
       parse_command(input, &cmd);
 
       if (!validate_command(&cmd)) 
@@ -71,9 +72,9 @@ int main(void)
 
       if (is_builtin(cmd.command)) 
       {
-        execute_builtin(&cmd); //parent builtin (cd affects shell), like real shells
+        //executing builtin in parent process to affect shell state
+        execute_builtin(&cmd);
       } 
-
       else 
       {
         execute_command(&cmd);

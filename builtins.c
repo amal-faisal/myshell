@@ -1,6 +1,6 @@
 #include "myshell.h"
 
-//function to check if command is a built-in
+//checking if command is a built-in
 //returns 1 if built-in, 0 otherwise
 int is_builtin(char *command) 
 {
@@ -8,7 +8,7 @@ int is_builtin(char *command)
   {
     return 0;
   }
-  //checking for built-in commands
+  //checking for built-in commands (cd and pwd)
   if (strcmp(command, "cd") == 0 || strcmp(command, "pwd") == 0) 
   {
     return 1;
@@ -17,11 +17,11 @@ int is_builtin(char *command)
   return 0;
 }
 
-//function to execute built-in commands
+//executing built-in commands
 //returns 0 on success, 1 on failure
 int execute_builtin(Command *cmd) 
 {
-  //handling cd command
+  //handling cd command for changing directory
   if (strcmp(cmd->command, "cd") == 0) 
   {
     char *path; //path to change to
@@ -29,7 +29,7 @@ int execute_builtin(Command *cmd)
     //checking if path argument was provided
     if (cmd->args[1] == NULL) 
     {
-      //no argument - changing to home directory
+      //no argument provided - changing to home directory
       path = getenv("HOME");
       if (path == NULL) 
       {
@@ -37,22 +37,22 @@ int execute_builtin(Command *cmd)
         return 1;
       }
     } 
-    
     else 
     {
-      // using provided path
+      //using provided path argument
       path = cmd->args[1];
     }
     
-    // attempting to change directory
-    if (chdir(path) != 0) {
+    //attempting to change directory
+    if (chdir(path) != 0) 
+    {
       perror("cd");
       return 1;
     }
     return 0;
   }
   
-  //handling pwd command
+  //handling pwd command for printing working directory
   if (strcmp(cmd->command, "pwd") == 0) 
   {
     char cwd[1024]; //buffer for current working directory
@@ -64,12 +64,12 @@ int execute_builtin(Command *cmd)
       return 1;
     }
     
-    //printing current working directory
+    //printing current working directory to stdout
     printf("%s\n", cwd);
     return 0;
   }
   
-  //unknown built-in (should not reach here)
+  //unknown built-in command (should not reach here)
   fprintf(stderr, "Unknown built-in: %s\n", cmd->command);
   return 1;
 }
