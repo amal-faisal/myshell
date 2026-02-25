@@ -1,6 +1,7 @@
 #include "myshell.h"
 
-int main(void) {
+int main(void) 
+{
   char input[MAX_INPUT]; //buffer for storing user input
   Command cmd; //structure for storing parsed command
   
@@ -43,31 +44,41 @@ int main(void) {
     //checking for empty input (user just pressed Enter)
     if (strlen(input) == 0) 
     {
-      continue; // skipping to next iteration
+      continue; //skipping to next iteration
     }
-  if (strchr(input, '|') != NULL) {
-  Pipeline p;
-  parse_pipeline(input, &p);
+    if (strchr(input, '|') != NULL) 
+    {
+      Pipeline p;
+      parse_pipeline(input, &p);
 
-  if (!validate_pipeline(&p)) {
-    continue;
-  }
+      if (!validate_pipeline(&p)) 
+      {
+        continue;
+      }
 
-  execute_pipeline(&p);
-} else {
-  // existing single-command behavior
-  parse_command(input, &cmd);
+    execute_pipeline(&p);
+    } 
 
-  if (!validate_command(&cmd)) {
-    continue;
-  }
+  else 
+    {
+      //existing single-command behavior
+      parse_command(input, &cmd);
 
-  if (is_builtin(cmd.command)) {
-    execute_builtin(&cmd); // parent builtin (cd affects shell) — like real shells
-  } else {
-    execute_command(&cmd);
-  }
-}
+      if (!validate_command(&cmd)) 
+      {
+        continue;
+      }
+
+      if (is_builtin(cmd.command)) 
+      {
+        execute_builtin(&cmd); //parent builtin (cd affects shell), like real shells
+      } 
+
+      else 
+      {
+        execute_command(&cmd);
+      }
+    }
   }
   
   //exiting shell successfully

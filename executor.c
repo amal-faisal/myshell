@@ -134,32 +134,35 @@ void execute_command(Command *cmd)
       
       //if execvp returns, it failed
       //exiting with 127 for command not found (standard shell convention)
-      if (errno == ENOENT) {
+    if (errno == ENOENT) 
+    {
 	  fprintf(stderr, "Command not found.\n");
-	} else {
+    } 
+    else 
+    {
  	 perror(cmd->command);
-	}
-      _exit(127);
+	  }
+    _exit(127);
       
     default:
-      //parent process - waiting for child to finish
+    //parent process - waiting for child to finish
       
-      //waiting for child process to terminate
-      waitpid(pid, &status, 0);
+    //waiting for child process to terminate
+    waitpid(pid, &status, 0);
       
-      //checking if child exited normally
-      if (WIFEXITED(status)) 
+    //checking if child exited normally
+    if (WIFEXITED(status)) 
+    {
+      //child exited normally
+      //checking exit status (0 = success, non-zero = error)
+      if (WEXITSTATUS(status) != 0) 
       {
-        //child exited normally
-        //checking exit status (0 = success, non-zero = error)
-        if (WEXITSTATUS(status) != 0) 
-        {
-          //command failed with non-zero exit status
-          //error message already printed by child
-        }
+        //command failed with non-zero exit status
+        //error message already printed by child
       }
+    }
       
-      break;
+    break;
   }
 }
 
@@ -167,28 +170,31 @@ static int command_exists(const char *cmd)
 {
   if (!cmd || cmd[0] == '\0') return 0;
 
-  // If command contains '/', treat as a path (./prog, /bin/ls, etc.)
-  if (strchr(cmd, '/')) {
+    //if command contains '/', treat as a path (./prog, /bin/ls, etc.)
+  if (strchr(cmd, '/')) 
+  {
     return (access(cmd, X_OK) == 0);
   }
 
-  // Search PATH
+  //searching PATH
   const char *path_env = getenv("PATH");
   if (!path_env) return 0;
 
-  // Make a copy because strtok modifies
+  //making a copy because strtok modifies
   char path_copy[4096];
   strncpy(path_copy, path_env, sizeof(path_copy) - 1);
   path_copy[sizeof(path_copy) - 1] = '\0';
 
   char *dir = strtok(path_copy, ":");
-  while (dir) {
+  while (dir)
+  {
     char full[4096];
     snprintf(full, sizeof(full), "%s/%s", dir, cmd);
     if (access(full, X_OK) == 0) return 1;
     dir = strtok(NULL, ":");
   }
   return 0;
+
 }
 
 int validate_pipeline(Pipeline *p)
@@ -247,10 +253,12 @@ void execute_pipeline(Pipeline *p)
 {
   int n = p->count;
 
-  // create n-1 pipes
+  //creating n-1 pipes
   int pipes[MAX_CMDS - 1][2];
-  for (int i = 0; i < n - 1; i++) {
-    if (pipe(pipes[i]) == -1) {
+  for (int i = 0; i < n - 1; i++) 
+  {
+    if (pipe(pipes[i]) == -1) 
+    {
       perror("pipe");
       return;
     }
@@ -258,95 +266,131 @@ void execute_pipeline(Pipeline *p)
 
   pid_t pids[MAX_CMDS];
 
-  for (int i = 0; i < n; i++) {
+  for (int i = 0; i < n; i++) 
+  {
     pid_t pid = fork();
-    if (pid == -1) {
+    if (pid == -1) 
+    {
       perror("fork failed");
-      // Close pipes in parent on failure
-      for (int k = 0; k < n - 1; k++) {
+      //closing pipes in parent on failure
+      for (int k = 0; k < n - 1; k++) 
+      {
         close(pipes[k][0]);
         close(pipes[k][1]);
       }
       return;
     }
 
-    if (pid == 0) {
-      // CHILD
+    if (pid == 0) 
+    {
+      //CHILD
 
-      // If not first, connect stdin to previous pipe read end
-      if (i > 0) {
-        if (dup2(pipes[i - 1][0], STDIN_FILENO) == -1) {
+      //if not first, connect stdin to previous pipe read end
+      if (i > 0) 
+      {
+        if (dup2(pipes[i - 1][0], STDIN_FILENO) == -1) 
+        {
           perror("dup2 pipe stdin");
           _exit(1);
         }
       }
 
-      // If not last, connect stdout to current pipe write end
-      if (i < n - 1) {
-        if (dup2(pipes[i][1], STDOUT_FILENO) == -1) {
+      //if not last, connect stdout to current pipe write end
+      if (i < n - 1) 
+      {
+        if (dup2(pipes[i][1], STDOUT_FILENO) == -1) 
+        {
           perror("dup2 pipe stdout");
           _exit(1);
         }
       }
 
-      // Close all pipe fds in child after dup2
-      for (int k = 0; k < n - 1; k++) {
+      //closing all pipe fds in child after dup2
+      for (int k = 0; k < n - 1; k++) 
+      {
         close(pipes[k][0]);
         close(pipes[k][1]);
       }
 
       Command *c = &p->cmds[i];
 
-      // Apply redirections AFTER pipe hookups so redirection overrides pipe (matches real shells)
-      if (c->input_file != NULL) {
+      //applying redirections AFTER pipe hookups so redirection overrides pipe (matches real shells)
+      if (c->input_file != NULL) 
+      {
         int fd_in = open(c->input_file, O_RDONLY);
-        if (fd_in == -1) { perror(c->input_file); _exit(1); }
-        if (dup2(fd_in, STDIN_FILENO) == -1) { perror("dup2 input"); close(fd_in); _exit(1); }
+        if (fd_in == -1) 
+        { 
+          perror(c->input_file); _exit(1); 
+        }
+        if (dup2(fd_in, STDIN_FILENO) == -1) 
+        { 
+          perror("dup2 input"); close(fd_in); _exit(1); 
+        }
         close(fd_in);
       }
 
-      if (c->output_file != NULL) {
+      if (c->output_file != NULL) 
+      {
         int fd_out = open(c->output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if (fd_out == -1) { perror(c->output_file); _exit(1); }
-        if (dup2(fd_out, STDOUT_FILENO) == -1) { perror("dup2 output"); close(fd_out); _exit(1); }
+        if (fd_out == -1)
+        { 
+          perror(c->output_file); _exit(1); 
+        }
+        if (dup2(fd_out, STDOUT_FILENO) == -1)
+        { 
+          perror("dup2 output"); close(fd_out); _exit(1); 
+        }
         close(fd_out);
       }
 
-      if (c->error_file != NULL) {
+      if (c->error_file != NULL) 
+      {
         int fd_err = open(c->error_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if (fd_err == -1) { perror(c->error_file); _exit(1); }
-        if (dup2(fd_err, STDERR_FILENO) == -1) { perror("dup2 error"); close(fd_err); _exit(1); }
+        if (fd_err == -1)
+        { 
+          perror(c->error_file); _exit(1); 
+        }
+        if (dup2(fd_err, STDERR_FILENO) == -1)
+        { 
+          perror("dup2 error"); close(fd_err); _exit(1); 
+        }
         close(fd_err);
       }
 
-      // Builtins inside pipeline run in child (subshell behavior)
-      if (is_builtin(c->command)) {
+      //builtins inside pipeline run in child (subshell behavior)
+      if (is_builtin(c->command)) 
+      {
         int rc = execute_builtin(c);
         _exit(rc);
       }
 
       execvp(c->command, c->args);
 
-      if (errno == ENOENT) {
+      if (errno == ENOENT) 
+      {
         fprintf(stderr, "Command not found.\n");
-      } else {
+      } 
+      else 
+      {
         perror(c->command);
       }
       _exit(127);
     }
 
-    // PARENT
+    //PARENT
     pids[i] = pid;
   }
 
-  // Parent closes all pipe fds
-  for (int k = 0; k < n - 1; k++) {
+  //parent closes all pipe fds
+  for (int k = 0; k < n - 1; k++) 
+  {
     close(pipes[k][0]);
     close(pipes[k][1]);
   }
 
-  // Wait for all children so prompt returns correctly after pipeline completes
-  for (int i = 0; i < n; i++) {
+  //waiting for all children so prompt returns correctly after pipeline completes
+  for (int i = 0; i < n; i++) 
+  {
     int status;
     waitpid(pids[i], &status, 0);
   }

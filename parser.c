@@ -167,12 +167,13 @@ static char *trim_inplace(char *s)
 {
   if (!s) return s;
 
-  // trim leading spaces
+  //trim leading spaces
   while (*s == ' ' || *s == '\t') s++;
 
-  // trim trailing spaces
+  //trim trailing spaces
   size_t len = strlen(s);
-  while (len > 0 && (s[len - 1] == ' ' || s[len - 1] == '\t')) {
+  while (len > 0 && (s[len - 1] == ' ' || s[len - 1] == '\t')) 
+  {
     s[len - 1] = '\0';
     len--;
   }
@@ -181,50 +182,58 @@ static char *trim_inplace(char *s)
 
 void parse_pipeline(char *input, Pipeline *p)
 {
-  // init pipeline
+  //init pipeline
   p->count = 0;
   p->has_error = 0;
   p->error_msg[0] = '\0';
 
-  // Split by '|' in-place.
-  // We also detect: command1 |   (missing after pipe)
-  // and: command1 | | command2  (empty between pipes)
+  //split by '|' in-place.
+  //we also detect: command1 |   (missing after pipe)
+  //and: command1 | | command2  (empty between pipes)
   char *cursor = input;
   char *segment_start = input;
 
-  while (1) {
-    if (*cursor == '|' || *cursor == '\0') {
+  while (1) 
+  {
+    if (*cursor == '|' || *cursor == '\0') 
+    {
       char saved = *cursor;
       *cursor = '\0';
 
       char *seg = trim_inplace(segment_start);
 
-      if (seg[0] == '\0') {
-        // empty segment
-        if (saved == '\0') {
-          // ends with pipe or whole line empty (but main already filters empty input)
+      if (seg[0] == '\0') 
+      {
+        //empty segment
+        if (saved == '\0') 
+        {
+          //ends with pipe or whole line empty (but main already filters empty input)
           p->has_error = 1;
           strcpy(p->error_msg, "Command missing after pipe.");
           return;
-        } else {
+        } 
+        else 
+        {
           p->has_error = 1;
           strcpy(p->error_msg, "Empty command between pipes.");
           return;
         }
       }
 
-      if (p->count >= MAX_CMDS) {
+      if (p->count >= MAX_CMDS) 
+      {
         p->has_error = 1;
         snprintf(p->error_msg, sizeof(p->error_msg),
                  "Error: Too many commands in pipeline (max %d).", MAX_CMDS);
         return;
       }
 
-      // Parse this segment into a Command (reuses your existing redirection parsing)
+      //parsing this segment into a command (reuses our existing redirection parsing)
       parse_command(seg, &p->cmds[p->count]);
 
-      // If parse_command itself found an error, bubble it up
-      if (p->cmds[p->count].has_error) {
+      //if parse_command itself found an error, bubble it up
+      if (p->cmds[p->count].has_error) 
+      {
         p->has_error = 1;
         strncpy(p->error_msg, p->cmds[p->count].error_msg, sizeof(p->error_msg) - 1);
         p->error_msg[sizeof(p->error_msg) - 1] = '\0';
@@ -233,11 +242,12 @@ void parse_pipeline(char *input, Pipeline *p)
 
       p->count++;
 
-      if (saved == '\0') {
-        break; // end of input
+      if (saved == '\0') 
+      {
+        break; //end of input
       }
 
-      // move to next segment
+      //moving to next segment
       segment_start = cursor + 1;
       cursor = segment_start;
       continue;
@@ -246,6 +256,6 @@ void parse_pipeline(char *input, Pipeline *p)
     cursor++;
   }
 
-  // If input ends with a pipe, we would have produced an empty final segment
+  //if input ends with a pipe, we would have produced an empty final segment
 }
 
