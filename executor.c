@@ -1,5 +1,8 @@
 #include "myshell.h"
 
+//forward declarations
+static int command_exists(const char *cmd);
+
 //validating parsed command before execution
 //returns 1 if valid, 0 if invalid
 int validate_command(Command *cmd) 
@@ -34,6 +37,8 @@ int validate_command(Command *cmd)
   }
   
   //command is valid
+  //note: command existence check happens in child process (execvp)
+  //so "command not found" errors are properly redirected with 2>
   return 1;
 }
 

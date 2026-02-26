@@ -8,8 +8,8 @@ int is_builtin(char *command)
   {
     return 0;
   }
-  //checking for built-in commands (cd and pwd)
-  if (strcmp(command, "cd") == 0 || strcmp(command, "pwd") == 0) 
+  //checking for built-in commands (cd, pwd, and echo)
+  if (strcmp(command, "cd") == 0 || strcmp(command, "pwd") == 0 || strcmp(command, "echo") == 0) 
   {
     return 1;
   }
@@ -66,6 +66,62 @@ int execute_builtin(Command *cmd)
     
     //printing current working directory to stdout
     printf("%s\n", cwd);
+    return 0;
+  }
+  
+  //handling echo command for printing text
+  if (strcmp(cmd->command, "echo") == 0) 
+  {
+    int interpret_escapes = 0; //flag for -e option
+    int start_arg = 1; //starting argument index
+    
+    //checking for -e flag
+    if (cmd->args[1] != NULL && strcmp(cmd->args[1], "-e") == 0) 
+    {
+      interpret_escapes = 1;
+      start_arg = 2;
+    }
+    
+    //printing each argument separated by spaces
+    for (int i = start_arg; cmd->args[i] != NULL; i++) 
+    {
+      if (i > start_arg) 
+      {
+        printf(" ");
+      }
+      
+      char *str = cmd->args[i];
+      if (interpret_escapes) 
+      {
+        //processing escape sequences
+        for (int j = 0; str[j] != '\0'; j++) 
+        {
+          if (str[j] == '\\' && str[j+1] != '\0') 
+          {
+            //handling escape sequences
+            j++;
+            switch (str[j]) 
+            {
+              case 'n': printf("\n"); break;
+              case 't': printf("\t"); break;
+              case 'r': printf("\r"); break;
+              case '\\': printf("\\"); break;
+              default: printf("%c", str[j]); break;
+            }
+          } 
+          else 
+          {
+            printf("%c", str[j]);
+          }
+        }
+      } 
+      else 
+      {
+        //printing without interpreting escapes
+        printf("%s", str);
+      }
+    }
+    printf("\n");
     return 0;
   }
   

@@ -72,8 +72,84 @@ int main(void)
 
       if (is_builtin(cmd.command)) 
       {
-        //executing builtin in parent process to affect shell state
-        execute_builtin(&cmd);
+        //executing builtin with redirection support
+        //saving original file descriptors
+        int saved_stdin = -1, saved_stdout = -1, saved_stderr = -1;
+        int redirect_success = 1;
+        
+        //handling input redirection
+        if (cmd.input_file != NULL) 
+        {
+          saved_stdin = dup(STDIN_FILENO);
+          int fd_in = open(cmd.input_file, O_RDONLY);
+          if (fd_in == -1) 
+          {
+            perror(cmd.input_file);
+            redirect_success = 0;
+          } 
+          else 
+          {
+            dup2(fd_in, STDIN_FILENO);
+            close(fd_in);
+          }
+        }
+        
+        //handling output redirection
+        if (redirect_success && cmd.output_file != NULL) 
+        {
+          saved_stdout = dup(STDOUT_FILENO);
+          int fd_out = open(cmd.output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+          if (fd_out == -1) 
+          {
+            perror(cmd.output_file);
+            redirect_success = 0;
+          } 
+          else 
+          {
+            dup2(fd_out, STDOUT_FILENO);
+            close(fd_out);
+          }
+        }
+        
+        //handling error redirection
+        if (redirect_success && cmd.error_file != NULL) 
+        {
+          saved_stderr = dup(STDERR_FILENO);
+          int fd_err = open(cmd.error_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+          if (fd_err == -1) 
+          {
+            perror(cmd.error_file);
+            redirect_success = 0;
+          } 
+          else 
+          {
+            dup2(fd_err, STDERR_FILENO);
+            close(fd_err);
+          }
+        }
+        
+        //executing builtin if redirections succeeded
+        if (redirect_success) 
+        {
+          execute_builtin(&cmd);
+        }
+        
+        //restoring original file descriptors
+        if (saved_stdin != -1) 
+        {
+          dup2(saved_stdin, STDIN_FILENO);
+          close(saved_stdin);
+        }
+        if (saved_stdout != -1) 
+        {
+          dup2(saved_stdout, STDOUT_FILENO);
+          close(saved_stdout);
+        }
+        if (saved_stderr != -1) 
+        {
+          dup2(saved_stderr, STDERR_FILENO);
+          close(saved_stderr);
+        }
       } 
       else 
       {

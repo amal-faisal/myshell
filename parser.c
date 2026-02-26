@@ -161,6 +161,33 @@ void parse_command(char *input, Command *cmd)
   
   //null-terminating the arguments array for execvp()
   cmd->args[arg_index] = NULL;
+  
+  //removing quotes from all arguments
+  for (int i = 0; i < arg_index; i++)
+  {
+    if (cmd->args[i] != NULL)
+    {
+      char *arg = cmd->args[i];
+      size_t len = strlen(arg);
+      
+      //checking if argument is surrounded by quotes
+      if (len >= 2)
+      {
+        //removing double quotes
+        if (arg[0] == '"' && arg[len - 1] == '"')
+        {
+          arg[len - 1] = '\0';
+          cmd->args[i] = arg + 1;
+        }
+        //removing single quotes
+        else if (arg[0] == '\'' && arg[len - 1] == '\'')
+        {
+          arg[len - 1] = '\0';
+          cmd->args[i] = arg + 1;
+        }
+      }
+    }
+  }
 }
 
 //trimming leading and trailing whitespace from a string in-place
