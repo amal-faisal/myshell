@@ -7,7 +7,6 @@
 #define BUFFER_SIZE 4096
 #define END_MARKER "<<END>>"
 
-/* ===== ADDED BY CHATGPT (HELPER: CHECK IF COMMAND EXISTS) - START ===== */
 static int server_command_exists(const char *cmd)
 {
     if (cmd == NULL || cmd[0] == '\0')
@@ -46,9 +45,7 @@ static int server_command_exists(const char *cmd)
 
     return 0;
 }
-/* ===== ADDED BY CHATGPT (HELPER: CHECK IF COMMAND EXISTS) - END ===== */
 
-/* ===== ADDED BY CHATGPT (HELPER: SEND ALL BYTES) - START ===== */
 static int send_all(int sockfd, const char *buffer, size_t length)
 {
     size_t total_sent = 0;
@@ -67,16 +64,10 @@ static int send_all(int sockfd, const char *buffer, size_t length)
 
     return 0;
 }
-/* ===== ADDED BY CHATGPT (HELPER: SEND ALL BYTES) - END ===== */
-
-/* ===== ADDED BY CHATGPT (HELPER: SEND END MARKER) - START ===== */
 static int send_end_marker(int client_fd)
 {
     return send_all(client_fd, END_MARKER, strlen(END_MARKER));
 }
-/* ===== ADDED BY CHATGPT (HELPER: SEND END MARKER) - END ===== */
-
-/* ===== ADDED BY CHATGPT (HELPER: STREAM OUTPUT TO CLIENT AND SERVER LOG) - START ===== */
 static int stream_and_log_output(int client_fd, int read_fd)
 {
     char output_buffer[BUFFER_SIZE];
@@ -105,9 +96,6 @@ static int stream_and_log_output(int client_fd, int read_fd)
 
     return 0;
 }
-/* ===== ADDED BY CHATGPT (HELPER: STREAM OUTPUT TO CLIENT AND SERVER LOG) - END ===== */
-
-/* ===== ADDED BY CHATGPT (HELPER: VALIDATE SINGLE COMMAND FOR SERVER LOGGING) - START ===== */
 static int is_invalid_single_command(char *input)
 {
     char input_copy[BUFFER_SIZE];
@@ -135,9 +123,6 @@ static int is_invalid_single_command(char *input)
 
     return 0;
 }
-/* ===== ADDED BY CHATGPT (HELPER: VALIDATE SINGLE COMMAND FOR SERVER LOGGING) - END ===== */
-
-/* ===== ADDED BY CHATGPT (HELPER: EXECUTE PHASE 1 LOGIC) - START ===== */
 static void execute_phase1_logic(char *input)
 {
     if (strchr(input, '|') != NULL)
@@ -168,9 +153,6 @@ static void execute_phase1_logic(char *input)
         }
     }
 }
-/* ===== ADDED BY CHATGPT (HELPER: EXECUTE PHASE 1 LOGIC) - END ===== */
-
-/* ===== ADDED BY CHATGPT (HELPER: EXECUTE BUILTIN IN SERVER PROCESS) - START ===== */
 static int execute_builtin_in_server(char *input, int client_fd)
 {
     Command cmd;
@@ -266,9 +248,6 @@ static int execute_builtin_in_server(char *input, int client_fd)
 
     return 0;
 }
-/* ===== ADDED BY CHATGPT (HELPER: EXECUTE BUILTIN IN SERVER PROCESS) - END ===== */
-
-/* ===== ADDED BY CHATGPT (HELPER: EXECUTE CHILD COMMANDS AND STREAM OUTPUT) - START ===== */
 static int execute_in_child_and_stream(char *input, int client_fd)
 {
     int pipefd[2];
@@ -333,7 +312,6 @@ static int execute_in_child_and_stream(char *input, int client_fd)
 
     return 0;
 }
-/* ===== ADDED BY CHATGPT (HELPER: EXECUTE CHILD COMMANDS AND STREAM OUTPUT) - END ===== */
 
 int main(void)
 {
@@ -342,8 +320,6 @@ int main(void)
     int option = 1;
     struct sockaddr_in address;
     socklen_t address_length = sizeof(address);
-
-    /* ===== ADDED BY CHATGPT (SERVER SOCKET SETUP) - START ===== */
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0)
     {
@@ -378,9 +354,6 @@ int main(void)
     }
 
     printf("[INFO] Server started, waiting for client connections...\n");
-    /* ===== ADDED BY CHATGPT (SERVER SOCKET SETUP) - END ===== */
-
-    /* ===== ADDED BY CHATGPT (SERVER ACCEPT LOOP) - START ===== */
     while (1)
     {
         client_fd = accept(server_fd, (struct sockaddr *)&address, &address_length);
@@ -433,8 +406,6 @@ int main(void)
             }
 
             printf("[EXECUTING] Executing command: \"%s\"\n", buffer);
-
-            /* ===== ADDED BY CHATGPT (SERVER-SIDE INVALID COMMAND LOGGING) - START ===== */
             if (strchr(buffer, '|') == NULL && is_invalid_single_command(buffer))
             {
                 char error_message[BUFFER_SIZE];
@@ -456,9 +427,6 @@ int main(void)
 
                 continue;
             }
-            /* ===== ADDED BY CHATGPT (SERVER-SIDE INVALID COMMAND LOGGING) - END ===== */
-
-            /* ===== ADDED BY CHATGPT (PERSISTENT BUILTIN HANDLING) - START ===== */
             if (strchr(buffer, '|') == NULL)
             {
                 char parse_copy[BUFFER_SIZE];
@@ -478,7 +446,6 @@ int main(void)
                     continue;
                 }
             }
-            /* ===== ADDED BY CHATGPT (PERSISTENT BUILTIN HANDLING) - END ===== */
 
             if (execute_in_child_and_stream(buffer, client_fd) < 0)
             {
@@ -488,7 +455,6 @@ int main(void)
 
         close(client_fd);
     }
-    /* ===== ADDED BY CHATGPT (SERVER ACCEPT LOOP) - END ===== */
 
     close(server_fd);
     return 0;
