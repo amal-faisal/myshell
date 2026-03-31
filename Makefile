@@ -10,6 +10,7 @@ TARGET = myshell
 
 # object files
 OBJS = myshell.o parser.o executor.o builtins.o
+SERVER_OBJS = parser.o executor.o builtins.o
 
 # default target - builds the executable
 all: $(TARGET)
@@ -34,12 +35,18 @@ executor.o: executor.c myshell.h
 builtins.o: builtins.c myshell.h
 	$(CC) $(CFLAGS) -c builtins.c
 
+# ===== SERVER TARGET (FIXED) =====
+server: server.c $(SERVER_OBJS)
+	$(CC) $(CFLAGS) -o server server.c $(SERVER_OBJS)
+# compiling and linking client program
+client: client.c
+	$(CC) $(CFLAGS) -o client client.c
 # cleaning build artifacts
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(OBJS) $(TARGET) server client
 
 # rebuilding from scratch
 rebuild: clean all
 
 # phony targets (not actual files)
-.PHONY: all clean rebuild
+.PHONY: all clean rebuild server client
