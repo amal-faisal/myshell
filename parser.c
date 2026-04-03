@@ -1,5 +1,114 @@
 #include "myshell.h"
 
+//extracting next token from input while respecting quotes
+//this tokenizer removes surrounding quotes and supports spaces inside quotes
+//returns NULL when there are no more tokens
+static char *next_token(char **cursor, int *quote_error)
+{
+  if (cursor == NULL || *cursor == NULL)
+  {
+    return NULL;
+  }
+
+  char *p = *cursor;
+
+  //skipping leading spaces/tabs
+  while (*p == ' ' || *p == '\t')
+  {
+    p++;
+  }
+
+  //end of string
+  if (*p == '\0')
+  {
+    *cursor = p;
+    return NULL;
+  }
+
+  //handling redirection operators as standalone tokens
+  if (p[0] == '2' && p[1] == '>')
+  {
+    char *op = p;
+    p += 2;
+    *p = '\0';
+    *cursor = p + 1;
+    return op;
+  }
+
+  if (p[0] == '<' || p[0] == '>')
+  {
+    char *op = p;
+    p++;
+    *p = '\0';
+    *cursor = p + 1;
+    return op;
+  }
+
+  //building token in place while removing quote characters
+  char *start = p;
+  char *w = p;
+  int in_single = 0;
+  int in_double = 0;
+
+  while (*p != '\0')
+  {
+    //ending token on unquoted whitespace
+    if (!in_single && !in_double && (*p == ' ' || *p == '\t'))
+    {
+      break;
+    }
+
+    //ending token before unquoted redirection operator
+    if (!in_single && !in_double)
+    {
+      if (*p == '<' || *p == '>' || (p[0] == '2' && p[1] == '>'))
+      {
+        break;
+      }
+    }
+
+    if (*p == '\'' && !in_double)
+    {
+      in_single = !in_single;
+      p++;
+      continue;
+    }
+
+    if (*p == '"' && !in_single)
+    {
+      in_double = !in_double;
+      p++;
+      continue;
+    }
+
+    *w = *p;
+    w++;
+    p++;
+  }
+
+  if (in_single || in_double)
+  {
+    *quote_error = 1;
+    return NULL;
+  }
+
+  char end_char = *p;
+  *w = '\0';
+
+  //advancing cursor to next parse position
+  //when token ended on a delimiter, move one char forward because delimiter became '\0'
+  if (end_char == '\0')
+  {
+    *cursor = p;
+  }
+  else
+  {
+    *cursor = p + 1;
+  }
+
+  return start;
+}
+
 //checking if a token is a redirection operator
 //returns 1 if it's a redirection operator, 0 otherwise
 int is_redirection_operator(char *token) 
@@ -22,6 +131,8 @@ void parse_command(char *input, Command *cmd)
 {
   int arg_index = 0; //index for arguments array
   char *token; //current token being processed
+  int quote_error = 0;
+  char *cursor = input;
   
   //initializing command structure with NULL values
   cmd->command = NULL;
@@ -37,11 +148,8 @@ void parse_command(char *input, Command *cmd)
     cmd->args[i] = NULL;
   }
   
-  //tokenizing input string by spaces
-  token = strtok(input, " ");
-  
   //iterating through all tokens
-  while (token != NULL && arg_index < MAX_ARGS - 1) 
+  while ((token = next_token(&cursor, &quote_error)) != NULL && arg_index < MAX_ARGS - 1) 
   {
     
     //checking for input redirection operator
@@ -55,7 +163,7 @@ void parse_command(char *input, Command *cmd)
         return;
       }
       //getting next token as input filename
-      token = strtok(NULL, " ");
+      token = next_token(&cursor, &quote_error);
       if (token == NULL) 
       {
         //missing input file
@@ -84,7 +192,7 @@ void parse_command(char *input, Command *cmd)
         return;
       }
       //getting next token as error filename
-      token = strtok(NULL, " ");
+      token = next_token(&cursor, &quote_error);
       if (token == NULL) 
       {
         //missing error file
@@ -112,7 +220,7 @@ void parse_command(char *input, Command *cmd)
         return;
       }
       //getting next token as output filename
-      token = strtok(NULL, " ");
+      token = next_token(&cursor, &quote_error);
       if (token == NULL) 
       {
         //missing output file
@@ -143,7 +251,14 @@ void parse_command(char *input, Command *cmd)
     }
     
     //getting next token
-    token = strtok(NULL, " ");
+  }
+
+  //checking for unmatched quote syntax error
+  if (quote_error)
+  {
+    cmd->has_error = 1;
+    strcpy(cmd->error_msg, "Unterminated quote.");
+    return;
   }
   
   //checking if we exited loop due to exceeding max arguments
@@ -151,7 +266,7 @@ void parse_command(char *input, Command *cmd)
   if (arg_index >= MAX_ARGS - 1) 
   {
     //checking if there are more tokens remaining
-    char *remaining = strtok(NULL, " ");
+    char *remaining = next_token(&cursor, &quote_error);
     if (remaining != NULL) 
     {
       //warning user about exceeding maximum arguments
@@ -162,32 +277,6 @@ void parse_command(char *input, Command *cmd)
   //null-terminating the arguments array for execvp()
   cmd->args[arg_index] = NULL;
   
-  //removing quotes from all arguments
-  for (int i = 0; i < arg_index; i++)
-  {
-    if (cmd->args[i] != NULL)
-    {
-      char *arg = cmd->args[i];
-      size_t len = strlen(arg);
-      
-      //checking if argument is surrounded by quotes
-      if (len >= 2)
-      {
-        //removing double quotes
-        if (arg[0] == '"' && arg[len - 1] == '"')
-        {
-          arg[len - 1] = '\0';
-          cmd->args[i] = arg + 1;
-        }
-        //removing single quotes
-        else if (arg[0] == '\'' && arg[len - 1] == '\'')
-        {
-          arg[len - 1] = '\0';
-          cmd->args[i] = arg + 1;
-        }
-      }
-    }
-  }
 }
 
 //trimming leading and trailing whitespace from a string in-place

@@ -76,6 +76,11 @@ int main(void)
         //saving original file descriptors
         int saved_stdin = -1, saved_stdout = -1, saved_stderr = -1;
         int redirect_success = 1;
+
+        //flushing stdio buffers before swapping file descriptors
+        //this avoids buffered data being written to the wrong destination
+        fflush(stdout);
+        fflush(stderr);
         
         //handling input redirection
         if (cmd.input_file != NULL) 
@@ -132,6 +137,10 @@ int main(void)
         if (redirect_success) 
         {
           execute_builtin(&cmd);
+
+          //flushing builtin output while redirections are still active
+          fflush(stdout);
+          fflush(stderr);
         }
         
         //restoring original file descriptors
