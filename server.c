@@ -411,9 +411,9 @@ int main(void)
                 char error_message[BUFFER_SIZE];
 
                 // snprintf(error_message, sizeof(error_message), "Command not found: %s\n", buffer);
-                snprintf(error_message, sizeof(error_message), "Command not found: %.4074s\n", buffer);
-
-                printf("[ERROR] Command not found: \"%s\"\n", buffer);
+               // snprintf(error_message, sizeof(error_message), "Command not found: %.4074s\n", buffer);
+                snprintf(error_message, sizeof(error_message), "Command not found:\n");
+printf("[ERROR] Command not found: \"%s\"\n", buffer);
                 printf("[OUTPUT] Sending error message to client: \"Command not found: %s\"\n", buffer);
 
                 if (send_all(client_fd, error_message, strlen(error_message)) < 0)
