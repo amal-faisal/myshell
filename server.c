@@ -176,6 +176,12 @@ static int stream_and_log_output(int client_fd, int read_fd)
     return 0;
 }
 
+//checks if a command has any redirections (input, output, or error)
+static int command_has_redirections(Command *cmd)
+{
+    return (cmd->input_file != NULL || cmd->output_file != NULL || cmd->error_file != NULL);
+}
+
 //for single commands only: checks if the command is invalid (non-builtin and not executable)
 static int is_invalid_single_command(char *input)
 {
@@ -240,15 +246,114 @@ static void execute_phase1_logic(char *input)
 
 //executes builtin commands while capturing stdout/stderr into a pipe
 //this allows server to send builtin output through the same socket path
+//note: builtins with redirections are executed without capture to let redirections apply
 static int execute_builtin_in_server(char *input, int client_fd)
 {
     Command cmd;
     int pipefd[2];
-    int saved_stdout;
-    int saved_stderr;
+    int saved_stdout = -1;
+    int saved_stderr = -1;
 
     parse_command(input, &cmd);
 
+    //if builtin has redirections, execute it with proper redirection setup (no output capture)
+    //so the redirections (>, <, 2>) apply to files, not to the capture pipe
+    if (command_has_redirections(&cmd))
+    {
+        int saved_stdin = -1;
+        int redirect_success = 1;
+
+        //flushing stdio buffers before swapping file descriptors
+        fflush(stdout);
+        fflush(stderr);
+
+        //handling input redirection
+        if (cmd.input_file != NULL)
+        {
+            saved_stdin = dup(STDIN_FILENO);
+            int fd_in = open(cmd.input_file, O_RDONLY);
+            if (fd_in == -1)
+            {
+                perror(cmd.input_file);
+                redirect_success = 0;
+            }
+            else
+            {
+                dup2(fd_in, STDIN_FILENO);
+                close(fd_in);
+            }
+        }
+
+        //handling output redirection
+        if (redirect_success && cmd.output_file != NULL)
+        {
+            saved_stdout = dup(STDOUT_FILENO);
+            int fd_out = open(cmd.output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (fd_out == -1)
+            {
+                perror(cmd.output_file);
+                redirect_success = 0;
+            }
+            else
+            {
+                dup2(fd_out, STDOUT_FILENO);
+                close(fd_out);
+            }
+        }
+
+        //handling error redirection
+        if (redirect_success && cmd.error_file != NULL)
+        {
+            saved_stderr = dup(STDERR_FILENO);
+            int fd_err = open(cmd.error_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (fd_err == -1)
+            {
+                perror(cmd.error_file);
+                redirect_success = 0;
+            }
+            else
+            {
+                dup2(fd_err, STDERR_FILENO);
+                close(fd_err);
+            }
+        }
+
+        //executing builtin if redirections succeeded
+        if (redirect_success && validate_command(&cmd))
+        {
+            execute_builtin(&cmd);
+
+            //flushing builtin output while redirections are still active
+            fflush(stdout);
+            fflush(stderr);
+        }
+
+        //restoring original file descriptors
+        if (saved_stdin != -1)
+        {
+            dup2(saved_stdin, STDIN_FILENO);
+            close(saved_stdin);
+        }
+        if (saved_stdout != -1)
+        {
+            dup2(saved_stdout, STDOUT_FILENO);
+            close(saved_stdout);
+        }
+        if (saved_stderr != -1)
+        {
+            dup2(saved_stderr, STDERR_FILENO);
+            close(saved_stderr);
+        }
+
+        if (send_end_marker(client_fd) < 0)
+        {
+            return -1;
+        }
+
+        return 0;
+    }
+
+    //no redirections: capture stdout/stderr for sending to client
     if (pipe(pipefd) == -1)
     {
         perror("pipe");
