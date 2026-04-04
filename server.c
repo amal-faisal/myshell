@@ -6,19 +6,72 @@
 #define PORT 8080
 #define BUFFER_SIZE 4096
 #define END_MARKER "<<END>>"
+#define MAX_PORT_TRIES 20
+#define PORT_HINT_FILE ".myshell_port"
 
-static int parse_port_or_exit(const char *port_text)
+static int parse_port_str(const char *port_text, int *port_out)
 {
     char *endptr = NULL;
     long parsed = strtol(port_text, &endptr, 10);
 
-    if (port_text[0] == '\0' || endptr == NULL || *endptr != '\0' || parsed < 1 || parsed > 65535)
+    if (port_text == NULL || port_text[0] == '\0' || endptr == NULL || *endptr != '\0' || parsed < 1 || parsed > 65535)
+    {
+        return -1;
+    }
+
+    *port_out = (int)parsed;
+    return 0;
+}
+
+static int parse_port_or_exit(const char *port_text)
+{
+    int parsed_port;
+
+    if (parse_port_str(port_text, &parsed_port) != 0)
     {
         fprintf(stderr, "Invalid port '%s'. Use a value between 1 and 65535.\n", port_text);
         exit(1);
     }
 
-    return (int)parsed;
+    return parsed_port;
+}
+
+static int bind_with_fallback(int server_fd, struct sockaddr_in *address, int start_port, int max_tries, int *bound_port)
+{
+    int attempt;
+
+    for (attempt = 0; attempt < max_tries && (start_port + attempt) <= 65535; attempt++)
+    {
+        int candidate = start_port + attempt;
+        address->sin_port = htons(candidate);
+
+        if (bind(server_fd, (struct sockaddr *)address, sizeof(*address)) == 0)
+        {
+            *bound_port = candidate;
+            return 0;
+        }
+
+        if (errno != EADDRINUSE)
+        {
+            perror("bind");
+            return -1;
+        }
+    }
+
+    return -1;
+}
+
+static void write_port_hint_file(int port)
+{
+    FILE *fp = fopen(PORT_HINT_FILE, "w");
+
+    if (fp == NULL)
+    {
+        return;
+    }
+
+    fprintf(fp, "%d\n", port);
+    fclose(fp);
 }
 
 static int server_command_exists(const char *cmd)
@@ -332,6 +385,8 @@ int main(int argc, char **argv)
     int server_fd;
     int client_fd;
     int port = PORT;
+    int bound_port = PORT;
+    int max_tries = MAX_PORT_TRIES;
     int option = 1;
     struct sockaddr_in address;
     socklen_t address_length = sizeof(address);
@@ -345,6 +400,7 @@ int main(int argc, char **argv)
     if (argc == 2)
     {
         port = parse_port_or_exit(argv[1]);
+        max_tries = 1;
     }
 
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -364,22 +420,29 @@ int main(int argc, char **argv)
     memset(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons((uint16_t)port);
 
-    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0)
+    if (bind_with_fallback(server_fd, &address, port, max_tries, &bound_port) < 0)
     {
-        if (errno == EADDRINUSE)
+        if (max_tries == 1 && errno == EADDRINUSE)
         {
             fprintf(stderr, "bind: port %d is already in use.\n", port);
             fprintf(stderr, "Try another port: %s %d\n", argv[0], port + 1);
         }
         else
         {
-            perror("bind");
+            fprintf(stderr, "bind: could not find a free port in range %d-%d.\n", port, port + max_tries - 1);
+            fprintf(stderr, "Run '%s <port>' to force a specific port.\n", argv[0]);
         }
         close(server_fd);
         return 1;
     }
+
+    if (bound_port != port)
+    {
+        printf("[INFO] Port %d is busy, using %d instead.\n", port, bound_port);
+    }
+
+    write_port_hint_file(bound_port);
 
     if (listen(server_fd, 5) < 0)
     {
@@ -388,7 +451,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    printf("[INFO] Server started on port %d, waiting for client connections...\n", port);
+    printf("[INFO] Server started on port %d, waiting for client connections...\n", bound_port);
     while (1)
     {
         client_fd = accept(server_fd, (struct sockaddr *)&address, &address_length);

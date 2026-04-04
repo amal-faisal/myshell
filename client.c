@@ -6,19 +6,56 @@
 #define PORT 8080
 #define BUFFER_SIZE 4096
 #define END_MARKER "<<END>>"
+#define PORT_HINT_FILE ".myshell_port"
 
-static int parse_port_or_exit(const char *port_text)
+static int parse_port_str(const char *port_text, int *port_out)
 {
     char *endptr = NULL;
     long parsed = strtol(port_text, &endptr, 10);
 
-    if (port_text[0] == '\0' || endptr == NULL || *endptr != '\0' || parsed < 1 || parsed > 65535)
+    if (port_text == NULL || port_text[0] == '\0' || endptr == NULL || *endptr != '\0' || parsed < 1 || parsed > 65535)
+    {
+        return -1;
+    }
+
+    *port_out = (int)parsed;
+    return 0;
+}
+
+static int parse_port_or_exit(const char *port_text)
+{
+    int parsed_port;
+
+    if (parse_port_str(port_text, &parsed_port) != 0)
     {
         fprintf(stderr, "Invalid port '%s'. Use a value between 1 and 65535.\n", port_text);
         exit(1);
     }
 
-    return (int)parsed;
+    return parsed_port;
+}
+
+static int read_port_from_hint_file(int *port_out)
+{
+    FILE *fp;
+    char line[64];
+
+    fp = fopen(PORT_HINT_FILE, "r");
+    if (fp == NULL)
+    {
+        return -1;
+    }
+
+    if (fgets(line, sizeof(line), fp) == NULL)
+    {
+        fclose(fp);
+        return -1;
+    }
+
+    line[strcspn(line, "\n")] = '\0';
+    fclose(fp);
+
+    return parse_port_str(line, port_out);
 }
 
 //sending all bytes in a buffer over the socket
@@ -129,6 +166,7 @@ int main(int argc, char **argv)
 {
     int sockfd;
     int port = PORT;
+    const char *env_port;
     struct sockaddr_in server_addr;
     char input_buffer[BUFFER_SIZE];
 
@@ -141,6 +179,18 @@ int main(int argc, char **argv)
     if (argc == 2)
     {
         port = parse_port_or_exit(argv[1]);
+    }
+    else
+    {
+        env_port = getenv("MYSHELL_PORT");
+        if (env_port != NULL && parse_port_str(env_port, &port) == 0)
+        {
+            /* port loaded from environment */
+        }
+        else
+        {
+            read_port_from_hint_file(&port);
+        }
     }
 
     //creating TCP socket for client-server communication
@@ -163,7 +213,8 @@ int main(int argc, char **argv)
         if (errno == ECONNREFUSED)
         {
             fprintf(stderr, "connect: no server is listening on 127.0.0.1:%d\n", port);
-            fprintf(stderr, "Start server first, or run both with the same custom port.\n");
+            fprintf(stderr, "Start server first, or run both with the same port.\n");
+            fprintf(stderr, "Tip: server writes its active port to %s.\n", PORT_HINT_FILE);
         }
         else
         {
