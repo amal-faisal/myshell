@@ -2,6 +2,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/time.h>
 
 #define PORT 8080
 #define BUFFER_SIZE 4096
@@ -104,6 +105,13 @@ static int receive_response_until_end(int sockfd)
 
         if (bytes_received < 0)
         {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                fprintf(stderr, "Server is not responding. Make sure the server is running and using the same port.\n");
+                free(response);
+                return -1;
+            }
+
             perror("recv");
             free(response);
             return -1;
@@ -167,6 +175,7 @@ int main(int argc, char **argv)
     int sockfd;
     int port = PORT;
     const char *env_port;
+    struct timeval timeout;
     struct sockaddr_in server_addr;
     char input_buffer[BUFFER_SIZE];
 
@@ -220,6 +229,15 @@ int main(int argc, char **argv)
         {
             perror("connect");
         }
+        close(sockfd);
+        return 1;
+    }
+
+    timeout.tv_sec = 5;
+    timeout.tv_usec = 0;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0)
+    {
+        perror("setsockopt(SO_RCVTIMEO)");
         close(sockfd);
         return 1;
     }
