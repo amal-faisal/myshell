@@ -9,6 +9,8 @@
 #define END_MARKER "<<END>>"
 #define PORT_HINT_FILE ".myshell_port"
 
+// Parses and validates a port string into an integer in range [1, 65535]
+// Returns 0 on success, -1 on invalid input
 static int parse_port_str(const char *port_text, int *port_out)
 {
     char *endptr = NULL;
@@ -23,6 +25,7 @@ static int parse_port_str(const char *port_text, int *port_out)
     return 0;
 }
 
+// Same parsing helper but exits immediately with a clear usage error on failure
 static int parse_port_or_exit(const char *port_text)
 {
     int parsed_port;
@@ -36,6 +39,8 @@ static int parse_port_or_exit(const char *port_text)
     return parsed_port;
 }
 
+// Reads server-selected port from hint file created by server startup
+// Returns 0 on success, -1 if file is missing/invalid
 static int read_port_from_hint_file(int *port_out)
 {
     FILE *fp;
@@ -187,10 +192,12 @@ int main(int argc, char **argv)
 
     if (argc == 2)
     {
+        // Manual override: always use the provided port
         port = parse_port_or_exit(argv[1]);
     }
     else
     {
+        // Priority order: env var -> hint file -> default constant
         env_port = getenv("MYSHELL_PORT");
         if (env_port != NULL && parse_port_str(env_port, &port) == 0)
         {
@@ -233,6 +240,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    // Protect client from hanging forever if server stops responding mid-session
     timeout.tv_sec = 5;
     timeout.tv_usec = 0;
     if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0)

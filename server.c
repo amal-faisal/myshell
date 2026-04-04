@@ -9,6 +9,8 @@
 #define MAX_PORT_TRIES 20
 #define PORT_HINT_FILE ".myshell_port"
 
+//parses a numeric port string and validates range [1, 65535]
+//returns 0 on success, -1 on invalid input
 static int parse_port_str(const char *port_text, int *port_out)
 {
     char *endptr = NULL;
@@ -23,6 +25,7 @@ static int parse_port_str(const char *port_text, int *port_out)
     return 0;
 }
 
+//same as parse_port_str, but exits with a friendly error message on invalid input
 static int parse_port_or_exit(const char *port_text)
 {
     int parsed_port;
@@ -36,6 +39,8 @@ static int parse_port_or_exit(const char *port_text)
     return parsed_port;
 }
 
+//tries to bind starting at start_port; if busy, increments port until max_tries
+//returns 0 on success and writes chosen port to bound_port
 static int bind_with_fallback(int server_fd, struct sockaddr_in *address, int start_port, int max_tries, int *bound_port)
 {
     int attempt;
@@ -61,6 +66,7 @@ static int bind_with_fallback(int server_fd, struct sockaddr_in *address, int st
     return -1;
 }
 
+//writes the active server port so the client can auto-discover it later
 static void write_port_hint_file(int port)
 {
     FILE *fp = fopen(PORT_HINT_FILE, "w");
@@ -74,6 +80,7 @@ static void write_port_hint_file(int port)
     fclose(fp);
 }
 
+//checks if command exists either as a path or in any directory from PATH
 static int server_command_exists(const char *cmd)
 {
     if (cmd == NULL || cmd[0] == '\0')
@@ -113,6 +120,7 @@ static int server_command_exists(const char *cmd)
     return 0;
 }
 
+//sends the full buffer even if send() writes only partial bytes
 static int send_all(int sockfd, const char *buffer, size_t length)
 {
     size_t total_sent = 0;
@@ -131,10 +139,14 @@ static int send_all(int sockfd, const char *buffer, size_t length)
 
     return 0;
 }
+
+//sends protocol delimiter so client knows command output is complete
 static int send_end_marker(int client_fd)
 {
     return send_all(client_fd, END_MARKER, strlen(END_MARKER));
 }
+
+//reads child/builtin output from pipe, mirrors it on server logs, and forwards to client
 static int stream_and_log_output(int client_fd, int read_fd)
 {
     char output_buffer[BUFFER_SIZE];
@@ -163,6 +175,8 @@ static int stream_and_log_output(int client_fd, int read_fd)
 
     return 0;
 }
+
+//for single commands only: checks if the command is invalid (non-builtin and not executable)
 static int is_invalid_single_command(char *input)
 {
     char input_copy[BUFFER_SIZE];
@@ -190,6 +204,9 @@ static int is_invalid_single_command(char *input)
 
     return 0;
 }
+
+//routes command execution through Phase 1 parser/executor logic
+//supports both pipelines and non-pipeline commands
 static void execute_phase1_logic(char *input)
 {
     if (strchr(input, '|') != NULL)
@@ -220,6 +237,9 @@ static void execute_phase1_logic(char *input)
         }
     }
 }
+
+//executes builtin commands while capturing stdout/stderr into a pipe
+//this allows server to send builtin output through the same socket path
 static int execute_builtin_in_server(char *input, int client_fd)
 {
     Command cmd;
@@ -315,6 +335,8 @@ static int execute_builtin_in_server(char *input, int client_fd)
 
     return 0;
 }
+
+//forks a child to execute Phase 1 logic, captures its output, then streams to client
 static int execute_in_child_and_stream(char *input, int client_fd)
 {
     int pipefd[2];
@@ -399,10 +421,12 @@ int main(int argc, char **argv)
 
     if (argc == 2)
     {
+        //explicit port mode: use exactly this port (no fallback scan)
         port = parse_port_or_exit(argv[1]);
         max_tries = 1;
     }
 
+    //create listening TCP socket
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0)
     {
@@ -410,6 +434,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    //allow quick restarts even if previous socket is in TIME_WAIT
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option)) < 0)
     {
         perror("setsockopt");
@@ -421,6 +446,7 @@ int main(int argc, char **argv)
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
 
+    //try desired/default port first, then fallback ports if needed
     if (bind_with_fallback(server_fd, &address, port, max_tries, &bound_port) < 0)
     {
         if (max_tries == 1 && errno == EADDRINUSE)
@@ -442,8 +468,10 @@ int main(int argc, char **argv)
         printf("[INFO] Port %d is busy, using %d instead.\n", port, bound_port);
     }
 
+    //share selected port for clients that auto-read PORT_HINT_FILE
     write_port_hint_file(bound_port);
 
+    //start listening for incoming clients
     if (listen(server_fd, 5) < 0)
     {
         perror("listen");
@@ -463,6 +491,7 @@ int main(int argc, char **argv)
 
         printf("[INFO] Client connected.\n");
 
+        //handle one client session until disconnect or explicit exit command
         while (1)
         {
             char buffer[BUFFER_SIZE];
@@ -488,6 +517,7 @@ int main(int argc, char **argv)
 
             printf("[RECEIVED] Received command: \"%s\" from client.\n", buffer);
 
+            //empty command still receives end marker to keep protocol in sync
             if (strlen(buffer) == 0)
             {
                 if (send_end_marker(client_fd) < 0)
@@ -504,6 +534,8 @@ int main(int argc, char **argv)
             }
 
             printf("[EXECUTING] Executing command: \"%s\"\n", buffer);
+
+            //fast-path for obvious invalid single command names
             if (strchr(buffer, '|') == NULL && is_invalid_single_command(buffer))
             {
                 char error_message[BUFFER_SIZE + 30];
@@ -524,6 +556,8 @@ int main(int argc, char **argv)
 
                 continue;
             }
+
+            //run builtins in-process so shell state behavior matches Phase 1
             if (strchr(buffer, '|') == NULL)
             {
                 char parse_copy[BUFFER_SIZE];
@@ -544,12 +578,14 @@ int main(int argc, char **argv)
                 }
             }
 
+            //all remaining commands execute through child capture path
             if (execute_in_child_and_stream(buffer, client_fd) < 0)
             {
                 break;
             }
         }
 
+        //after client session ends, close socket and wait for next client
         close(client_fd);
     }
 
