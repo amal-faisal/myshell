@@ -408,7 +408,7 @@ int main(void)
             printf("[EXECUTING] Executing command: \"%s\"\n", buffer);
             if (strchr(buffer, '|') == NULL && is_invalid_single_command(buffer))
             {
-                char error_message[BUFFER_SIZE];
+                char error_message[BUFFER_SIZE + 30];
 
                 snprintf(error_message, sizeof(error_message), "Command not found: %s\n", buffer);
                 printf("[ERROR] Command not found: \"%s\"\n", buffer);
