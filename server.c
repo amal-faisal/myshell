@@ -482,6 +482,7 @@ int main(int argc, char **argv)
     printf("[INFO] Server started on port %d, waiting for client connections...\n", bound_port);
     while (1)
     {
+        //blocking accept: server stays alive and waits for the next client forever
         client_fd = accept(server_fd, (struct sockaddr *)&address, &address_length);
         if (client_fd < 0)
         {
@@ -497,6 +498,7 @@ int main(int argc, char **argv)
             char buffer[BUFFER_SIZE];
             ssize_t bytes_received;
 
+            //receive one command line from client socket
             memset(buffer, 0, BUFFER_SIZE);
             bytes_received = recv(client_fd, buffer, BUFFER_SIZE - 1, 0);
 
@@ -512,6 +514,7 @@ int main(int argc, char **argv)
                 break;
             }
 
+            //normalize incoming command by stripping trailing newline
             buffer[bytes_received] = '\0';
             buffer[strcspn(buffer, "\n")] = '\0';
 
@@ -529,6 +532,7 @@ int main(int argc, char **argv)
 
             if (strcmp(buffer, "exit") == 0)
             {
+                //exit only ends this client session; server keeps running for future clients
                 printf("[INFO] Client requested exit.\n");
                 break;
             }
@@ -563,6 +567,7 @@ int main(int argc, char **argv)
                 char parse_copy[BUFFER_SIZE];
                 Command cmd;
 
+                //parse a safe copy because parser mutates input with token separators
                 strncpy(parse_copy, buffer, sizeof(parse_copy) - 1);
                 parse_copy[sizeof(parse_copy) - 1] = '\0';
 
@@ -570,6 +575,7 @@ int main(int argc, char **argv)
 
                 if (cmd.command != NULL && is_builtin(cmd.command))
                 {
+                    //builtin path avoids forking extra process and keeps semantics consistent
                     if (execute_builtin_in_server(buffer, client_fd) < 0)
                     {
                         break;
