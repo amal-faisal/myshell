@@ -7,6 +7,20 @@
 #define BUFFER_SIZE 4096
 #define END_MARKER "<<END>>"
 
+static int parse_port_or_exit(const char *port_text)
+{
+    char *endptr = NULL;
+    long parsed = strtol(port_text, &endptr, 10);
+
+    if (port_text[0] == '\0' || endptr == NULL || *endptr != '\0' || parsed < 1 || parsed > 65535)
+    {
+        fprintf(stderr, "Invalid port '%s'. Use a value between 1 and 65535.\n", port_text);
+        exit(1);
+    }
+
+    return (int)parsed;
+}
+
 //sending all bytes in a buffer over the socket
 //returns 0 on success, -1 on failure
 static int send_all(int sockfd, const char *buffer, size_t length)
@@ -111,11 +125,23 @@ static int receive_response_until_end(int sockfd)
     }
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
     int sockfd;
+    int port = PORT;
     struct sockaddr_in server_addr;
     char input_buffer[BUFFER_SIZE];
+
+    if (argc > 2)
+    {
+        fprintf(stderr, "Usage: %s [port]\n", argv[0]);
+        return 1;
+    }
+
+    if (argc == 2)
+    {
+        port = parse_port_or_exit(argv[1]);
+    }
 
     //creating TCP socket for client-server communication
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -128,13 +154,21 @@ int main(void)
     //preparing server address structure
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(PORT);
+    server_addr.sin_port = htons((uint16_t)port);
     server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
     //connecting to server
     if (connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
     {
-        perror("connect");
+        if (errno == ECONNREFUSED)
+        {
+            fprintf(stderr, "connect: no server is listening on 127.0.0.1:%d\n", port);
+            fprintf(stderr, "Start server first, or run both with the same custom port.\n");
+        }
+        else
+        {
+            perror("connect");
+        }
         close(sockfd);
         return 1;
     }

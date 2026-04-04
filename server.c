@@ -7,6 +7,20 @@
 #define BUFFER_SIZE 4096
 #define END_MARKER "<<END>>"
 
+static int parse_port_or_exit(const char *port_text)
+{
+    char *endptr = NULL;
+    long parsed = strtol(port_text, &endptr, 10);
+
+    if (port_text[0] == '\0' || endptr == NULL || *endptr != '\0' || parsed < 1 || parsed > 65535)
+    {
+        fprintf(stderr, "Invalid port '%s'. Use a value between 1 and 65535.\n", port_text);
+        exit(1);
+    }
+
+    return (int)parsed;
+}
+
 static int server_command_exists(const char *cmd)
 {
     if (cmd == NULL || cmd[0] == '\0')
@@ -313,13 +327,26 @@ static int execute_in_child_and_stream(char *input, int client_fd)
     return 0;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
     int server_fd;
     int client_fd;
+    int port = PORT;
     int option = 1;
     struct sockaddr_in address;
     socklen_t address_length = sizeof(address);
+
+    if (argc > 2)
+    {
+        fprintf(stderr, "Usage: %s [port]\n", argv[0]);
+        return 1;
+    }
+
+    if (argc == 2)
+    {
+        port = parse_port_or_exit(argv[1]);
+    }
+
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0)
     {
@@ -337,11 +364,19 @@ int main(void)
     memset(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(PORT);
+    address.sin_port = htons((uint16_t)port);
 
     if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0)
     {
-        perror("bind");
+        if (errno == EADDRINUSE)
+        {
+            fprintf(stderr, "bind: port %d is already in use.\n", port);
+            fprintf(stderr, "Try another port: %s %d\n", argv[0], port + 1);
+        }
+        else
+        {
+            perror("bind");
+        }
         close(server_fd);
         return 1;
     }
@@ -353,7 +388,7 @@ int main(void)
         return 1;
     }
 
-    printf("[INFO] Server started, waiting for client connections...\n");
+    printf("[INFO] Server started on port %d, waiting for client connections...\n", port);
     while (1)
     {
         client_fd = accept(server_fd, (struct sockaddr *)&address, &address_length);
