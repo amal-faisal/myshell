@@ -3,3 +3,5 @@ myshell
 *.txt
 client
 server
+.DS_Store
+.myshell_port

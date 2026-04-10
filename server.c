@@ -193,6 +193,20 @@ static int is_invalid_single_command(char *input)
 
     parse_command(input_copy, &cmd);
 
+    //if parser already found a syntax/redirection error, let normal validation
+    //path report that exact error instead of overriding it as command-not-found
+    if (cmd.has_error)
+    {
+        return 0;
+    }
+
+    //for commands with redirection, let normal execution path handle
+    //file checks and command errors in the same order as Phase 1 logic
+    if (command_has_redirections(&cmd))
+    {
+        return 0;
+    }
+
     if (cmd.command == NULL)
     {
         return 0;
