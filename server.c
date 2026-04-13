@@ -847,6 +847,12 @@ int main(int argc, char **argv)
             ctx->client_ip[sizeof(ctx->client_ip) - 1] = '\0';
         }
 
+        log_printf_locked("[INFO] Client #%d connected from %s:%d. Assigned to Thread-%d.\n",
+                          ctx->client_id,
+                          ctx->client_ip,
+                          ctx->client_port,
+                          ctx->thread_index);
+
         if (pthread_create(&worker_tid, NULL, client_worker_thread, ctx) != 0)
         {
             perror("pthread_create");
@@ -859,12 +865,6 @@ int main(int argc, char **argv)
         {
             perror("pthread_detach");
         }
-
-        log_printf_locked("[INFO] Client #%d connected from %s:%d. Assigned to Thread-%d.\n",
-                          ctx->client_id,
-                          ctx->client_ip,
-                          ctx->client_port,
-                          ctx->thread_index);
     }
 
     close(server_fd);
