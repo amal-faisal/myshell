@@ -2,12 +2,84 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <pthread.h>
+#include <stdarg.h>
 
 #define PORT 8080
 #define BUFFER_SIZE 4096
 #define END_MARKER "<<END>>"
 #define MAX_PORT_TRIES 20
 #define PORT_HINT_FILE ".myshell_port"
+
+//defining global mutex for serializing server log output across threads
+static pthread_mutex_t g_log_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+//defining global mutex for protecting shared client id assignment
+static pthread_mutex_t g_client_id_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+//defining global counter for assigning incremental client ids
+static int g_next_client_id = 1;
+
+//serializing process-wide stdio redirection used by builtin execution
+static pthread_mutex_t g_builtin_stdio_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+//holding dedicated server logging fd that remains stable across dup2 operations
+static int g_server_log_fd = -1;
+
+//holding per-client context passed safely to a worker thread
+typedef struct
+{
+    int client_fd;
+    int client_id;
+    int client_port;
+    char client_ip[INET_ADDRSTRLEN];
+    int thread_index;
+} ClientContext;
+
+//printing server logs while avoiding interleaving between concurrent threads
+static void log_printf_locked(const char *fmt, ...)
+{
+    char log_buffer[8192];
+    int formatted_len;
+    va_list args;
+    int target_fd;
+
+    pthread_mutex_lock(&g_log_mutex);
+
+    va_start(args, fmt);
+    formatted_len = vsnprintf(log_buffer, sizeof(log_buffer), fmt, args);
+    va_end(args);
+
+    target_fd = (g_server_log_fd >= 0) ? g_server_log_fd : STDERR_FILENO;
+    if (formatted_len > 0)
+    {
+        size_t to_write = (size_t)formatted_len;
+        if (to_write > sizeof(log_buffer))
+        {
+            to_write = sizeof(log_buffer);
+        }
+
+        if (write(target_fd, log_buffer, to_write) < 0)
+        {
+            perror("write");
+        }
+    }
+
+    pthread_mutex_unlock(&g_log_mutex);
+}
+
+//assigning unique client id in a thread-safe way
+static int allocate_client_id(void)
+{
+    int assigned_id;
+
+    pthread_mutex_lock(&g_client_id_mutex);
+    assigned_id = g_next_client_id;
+    g_next_client_id++;
+    pthread_mutex_unlock(&g_client_id_mutex);
+
+    return assigned_id;
+}
 
 //parses a numeric port string and validates range [1, 65535]
 //returns 0 on success, -1 on invalid input
@@ -152,14 +224,14 @@ static int stream_and_log_output(int client_fd, int read_fd)
     char output_buffer[BUFFER_SIZE];
     ssize_t bytes_read;
 
-    printf("[OUTPUT] Sending output to client:\n");
+    log_printf_locked("[OUTPUT] Sending output to client:\n");
 
     while ((bytes_read = read(read_fd, output_buffer, BUFFER_SIZE - 1)) > 0)
     {
         output_buffer[bytes_read] = '\0';
 
-        /* printing the same output on the server for flow demonstration */
-        printf("%s", output_buffer);
+        //printing the same output on the server for flow demonstration
+        log_printf_locked("%s", output_buffer);
 
         if (send_all(client_fd, output_buffer, (size_t)bytes_read) < 0)
         {
@@ -261,7 +333,7 @@ static void execute_phase1_logic(char *input)
 //executes builtin commands while capturing stdout/stderr into a pipe
 //this allows server to send builtin output through the same socket path
 //note: builtins with redirections are executed without capture to let redirections apply
-static int execute_builtin_in_server(char *input, int client_fd)
+static int execute_builtin_in_server_impl(char *input, int client_fd)
 {
     Command cmd;
     int pipefd[2];
@@ -455,6 +527,18 @@ static int execute_builtin_in_server(char *input, int client_fd)
     return 0;
 }
 
+//wrapping builtin execution with mutex because dup2 on stdout/stderr is process-wide
+static int execute_builtin_in_server(char *input, int client_fd)
+{
+    int result;
+
+    pthread_mutex_lock(&g_builtin_stdio_mutex);
+    result = execute_builtin_in_server_impl(input, client_fd);
+    pthread_mutex_unlock(&g_builtin_stdio_mutex);
+
+    return result;
+}
+
 //forks a child to execute Phase 1 logic, captures its output, then streams to client
 static int execute_in_child_and_stream(char *input, int client_fd)
 {
@@ -521,16 +605,130 @@ static int execute_in_child_and_stream(char *input, int client_fd)
     return 0;
 }
 
+//handling one connected client session until disconnect or explicit exit
+static void handle_client_session(ClientContext *ctx)
+{
+    while (1)
+    {
+        char buffer[BUFFER_SIZE];
+        ssize_t bytes_received;
+
+        //receiving one command line from this client socket
+        memset(buffer, 0, BUFFER_SIZE);
+        bytes_received = recv(ctx->client_fd, buffer, BUFFER_SIZE - 1, 0);
+
+        if (bytes_received < 0)
+        {
+            perror("recv");
+            break;
+        }
+
+        if (bytes_received == 0)
+        {
+            break;
+        }
+
+        //normalizing incoming command by stripping trailing newline
+        buffer[bytes_received] = '\0';
+        buffer[strcspn(buffer, "\n")] = '\0';
+
+        log_printf_locked("[RECEIVED] Received command: \"%s\" from client.\n", buffer);
+
+        //sending end marker for empty commands to keep protocol synchronized
+        if (strlen(buffer) == 0)
+        {
+            if (send_end_marker(ctx->client_fd) < 0)
+            {
+                break;
+            }
+            continue;
+        }
+
+        if (strcmp(buffer, "exit") == 0)
+        {
+            log_printf_locked("[INFO] Client requested exit.\n");
+            break;
+        }
+
+        log_printf_locked("[EXECUTING] Executing command: \"%s\"\n", buffer);
+
+        //handling obvious invalid single command names early
+        if (strchr(buffer, '|') == NULL && is_invalid_single_command(buffer))
+        {
+            char error_message[BUFFER_SIZE + 30];
+
+            snprintf(error_message, sizeof(error_message), "Command not found: %s\n", buffer);
+            log_printf_locked("[ERROR] Command not found: \"%s\"\n", buffer);
+            log_printf_locked("[OUTPUT] Sending error message to client: \"Command not found: %s\"\n", buffer);
+
+            if (send_all(ctx->client_fd, error_message, strlen(error_message)) < 0)
+            {
+                break;
+            }
+
+            if (send_end_marker(ctx->client_fd) < 0)
+            {
+                break;
+            }
+
+            continue;
+        }
+
+        //handling builtins in-process so shell state behavior remains consistent
+        if (strchr(buffer, '|') == NULL)
+        {
+            char parse_copy[BUFFER_SIZE];
+            Command cmd;
+
+            //parsing a copy because parse_command modifies input buffers in-place
+            strncpy(parse_copy, buffer, sizeof(parse_copy) - 1);
+            parse_copy[sizeof(parse_copy) - 1] = '\0';
+
+            parse_command(parse_copy, &cmd);
+
+            if (cmd.command != NULL && is_builtin(cmd.command))
+            {
+                if (execute_builtin_in_server(buffer, ctx->client_fd) < 0)
+                {
+                    break;
+                }
+                continue;
+            }
+        }
+
+        //running non-builtin commands through child capture path
+        if (execute_in_child_and_stream(buffer, ctx->client_fd) < 0)
+        {
+            break;
+        }
+    }
+}
+
+//running one thread per client and cleaning resources at thread end
+static void *client_worker_thread(void *arg)
+{
+    ClientContext *ctx = (ClientContext *)arg;
+
+    handle_client_session(ctx);
+
+    close(ctx->client_fd);
+    log_printf_locked("[INFO] Client #%d disconnected from %s:%d.\n",
+                      ctx->client_id,
+                      ctx->client_ip,
+                      ctx->client_port);
+
+    free(ctx);
+    return NULL;
+}
+
 int main(int argc, char **argv)
 {
     int server_fd;
-    int client_fd;
     int port = PORT;
     int bound_port = PORT;
     int max_tries = MAX_PORT_TRIES;
     int option = 1;
     struct sockaddr_in address;
-    socklen_t address_length = sizeof(address);
 
     if (argc > 2)
     {
@@ -550,6 +748,15 @@ int main(int argc, char **argv)
     if (server_fd < 0)
     {
         perror("socket");
+        return 1;
+    }
+
+    //duplicating stderr once for server logging that must survive thread dup2 redirections
+    g_server_log_fd = dup(STDERR_FILENO);
+    if (g_server_log_fd < 0)
+    {
+        perror("dup");
+        close(server_fd);
         return 1;
     }
 
@@ -584,7 +791,7 @@ int main(int argc, char **argv)
 
     if (bound_port != port)
     {
-        printf("[INFO] Port %d is busy, using %d instead.\n", port, bound_port);
+        log_printf_locked("[INFO] Port %d is busy, using %d instead.\n", port, bound_port);
     }
 
     //share selected port for clients that auto-read PORT_HINT_FILE
@@ -598,122 +805,69 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    printf("[INFO] Server started on port %d, waiting for client connections...\n", bound_port);
+    log_printf_locked("[INFO] Server started, waiting for client connections...\n");
+
     while (1)
     {
+        int client_fd;
+        int client_id;
+        struct sockaddr_in client_address;
+        socklen_t client_address_length = sizeof(client_address);
+        ClientContext *ctx;
+        pthread_t worker_tid;
+
         //blocking accept: server stays alive and waits for the next client forever
-        client_fd = accept(server_fd, (struct sockaddr *)&address, &address_length);
+        client_fd = accept(server_fd, (struct sockaddr *)&client_address, &client_address_length);
         if (client_fd < 0)
         {
             perror("accept");
             continue;
         }
 
-        printf("[INFO] Client connected.\n");
-
-        //handle one client session until disconnect or explicit exit command
-        while (1)
+        //allocating thread context so data remains valid after accept loop iteration
+        ctx = (ClientContext *)malloc(sizeof(ClientContext));
+        if (ctx == NULL)
         {
-            char buffer[BUFFER_SIZE];
-            ssize_t bytes_received;
-
-            //receive one command line from client socket
-            memset(buffer, 0, BUFFER_SIZE);
-            bytes_received = recv(client_fd, buffer, BUFFER_SIZE - 1, 0);
-
-            if (bytes_received < 0)
-            {
-                perror("recv");
-                break;
-            }
-
-            if (bytes_received == 0)
-            {
-                printf("[INFO] Client disconnected.\n");
-                break;
-            }
-
-            //normalize incoming command by stripping trailing newline
-            buffer[bytes_received] = '\0';
-            buffer[strcspn(buffer, "\n")] = '\0';
-
-            printf("[RECEIVED] Received command: \"%s\" from client.\n", buffer);
-
-            //empty command still receives end marker to keep protocol in sync
-            if (strlen(buffer) == 0)
-            {
-                if (send_end_marker(client_fd) < 0)
-                {
-                    break;
-                }
-                continue;
-            }
-
-            if (strcmp(buffer, "exit") == 0)
-            {
-                //exit only ends this client session; server keeps running for future clients
-                printf("[INFO] Client requested exit.\n");
-                break;
-            }
-
-            printf("[EXECUTING] Executing command: \"%s\"\n", buffer);
-
-            //fast-path for obvious invalid single command names
-            if (strchr(buffer, '|') == NULL && is_invalid_single_command(buffer))
-            {
-                char error_message[BUFFER_SIZE + 30];
-
-                snprintf(error_message, sizeof(error_message), "Command not found: %s\n", buffer);
-                printf("[ERROR] Command not found: \"%s\"\n", buffer);
-                printf("[OUTPUT] Sending error message to client: \"Command not found: %s\"\n", buffer);
-
-                if (send_all(client_fd, error_message, strlen(error_message)) < 0)
-                {
-                    break;
-                }
-
-                if (send_end_marker(client_fd) < 0)
-                {
-                    break;
-                }
-
-                continue;
-            }
-
-            //run builtins in-process so shell state behavior matches Phase 1
-            if (strchr(buffer, '|') == NULL)
-            {
-                char parse_copy[BUFFER_SIZE];
-                Command cmd;
-
-                //parse a safe copy because parser mutates input with token separators
-                strncpy(parse_copy, buffer, sizeof(parse_copy) - 1);
-                parse_copy[sizeof(parse_copy) - 1] = '\0';
-
-                parse_command(parse_copy, &cmd);
-
-                if (cmd.command != NULL && is_builtin(cmd.command))
-                {
-                    //builtin path avoids forking extra process and keeps semantics consistent
-                    if (execute_builtin_in_server(buffer, client_fd) < 0)
-                    {
-                        break;
-                    }
-                    continue;
-                }
-            }
-
-            //all remaining commands execute through child capture path
-            if (execute_in_child_and_stream(buffer, client_fd) < 0)
-            {
-                break;
-            }
+            perror("malloc");
+            close(client_fd);
+            continue;
         }
 
-        //after client session ends, close socket and wait for next client
-        close(client_fd);
+        client_id = allocate_client_id();
+
+        memset(ctx, 0, sizeof(*ctx));
+        ctx->client_fd = client_fd;
+        ctx->client_id = client_id;
+        ctx->thread_index = client_id;
+        ctx->client_port = ntohs(client_address.sin_port);
+
+        if (inet_ntop(AF_INET, &client_address.sin_addr, ctx->client_ip, sizeof(ctx->client_ip)) == NULL)
+        {
+            strncpy(ctx->client_ip, "unknown", sizeof(ctx->client_ip) - 1);
+            ctx->client_ip[sizeof(ctx->client_ip) - 1] = '\0';
+        }
+
+        if (pthread_create(&worker_tid, NULL, client_worker_thread, ctx) != 0)
+        {
+            perror("pthread_create");
+            close(client_fd);
+            free(ctx);
+            continue;
+        }
+
+        if (pthread_detach(worker_tid) != 0)
+        {
+            perror("pthread_detach");
+        }
+
+        log_printf_locked("[INFO] Client #%d connected from %s:%d. Assigned to Thread-%d.\n",
+                          ctx->client_id,
+                          ctx->client_ip,
+                          ctx->client_port,
+                          ctx->thread_index);
     }
 
     close(server_fd);
+    close(g_server_log_fd);
     return 0;
 }

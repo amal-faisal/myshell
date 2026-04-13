@@ -3,7 +3,7 @@
 
 # compiler and flags
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c99
+CFLAGS = -Wall -Wextra -std=c99 -pthread
 
 # target executable
 TARGET = myshell
