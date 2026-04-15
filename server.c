@@ -219,12 +219,13 @@ static int send_end_marker(int client_fd)
 }
 
 //reads child/builtin output from pipe, mirrors it on server logs, and forwards to client
-static int stream_and_log_output(int client_fd, int read_fd)
+static int stream_and_log_output(int client_fd, int read_fd,  ClientContext *ctx)
 {
     char output_buffer[BUFFER_SIZE];
     ssize_t bytes_read;
 
-    log_printf_locked("[OUTPUT] Sending output to client:\n");
+    log_printf_locked("[OUTPUT] [Client #%d - %s:%d] Sending output to client:\n",
+    ctx->client_id, ctx->client_ip, ctx->client_port);
 
     while ((bytes_read = read(read_fd, output_buffer, BUFFER_SIZE - 1)) > 0)
     {
@@ -333,7 +334,7 @@ static void execute_phase1_logic(char *input)
 //executes builtin commands while capturing stdout/stderr into a pipe
 //this allows server to send builtin output through the same socket path
 //note: builtins with redirections are executed without capture to let redirections apply
-static int execute_builtin_in_server_impl(char *input, int client_fd)
+static int execute_builtin_in_server_impl(char *input, int client_fd, ClientContext *ctx)
 {
     Command cmd;
     int pipefd[2];
@@ -511,7 +512,7 @@ static int execute_builtin_in_server_impl(char *input, int client_fd)
     close(saved_stdout);
     close(saved_stderr);
 
-    if (stream_and_log_output(client_fd, pipefd[0]) < 0)
+    if (stream_and_log_output(client_fd, pipefd[0], ctx) < 0)
     {
         close(pipefd[0]);
         return -1;
@@ -528,19 +529,19 @@ static int execute_builtin_in_server_impl(char *input, int client_fd)
 }
 
 //wrapping builtin execution with mutex because dup2 on stdout/stderr is process-wide
-static int execute_builtin_in_server(char *input, int client_fd)
+static int execute_builtin_in_server(char *input, int client_fd, ClientContext *ctx)
 {
     int result;
 
     pthread_mutex_lock(&g_builtin_stdio_mutex);
-    result = execute_builtin_in_server_impl(input, client_fd);
+    result = execute_builtin_in_server_impl(input, client_fd, ctx);
     pthread_mutex_unlock(&g_builtin_stdio_mutex);
 
     return result;
 }
 
 //forks a child to execute Phase 1 logic, captures its output, then streams to client
-static int execute_in_child_and_stream(char *input, int client_fd)
+static int execute_in_child_and_stream(char *input, int client_fd, ClientContext *ctx)
 {
     int pipefd[2];
     pid_t pid;
@@ -587,7 +588,7 @@ static int execute_in_child_and_stream(char *input, int client_fd)
 
     close(pipefd[1]);
 
-    if (stream_and_log_output(client_fd, pipefd[0]) < 0)
+    if (stream_and_log_output(client_fd, pipefd[0], ctx) < 0)
     {
         close(pipefd[0]);
         waitpid(pid, NULL, 0);
@@ -632,7 +633,7 @@ static void handle_client_session(ClientContext *ctx)
         buffer[bytes_received] = '\0';
         buffer[strcspn(buffer, "\n")] = '\0';
 
-        log_printf_locked("[RECEIVED] Received command: \"%s\" from client.\n", buffer);
+        log_printf_locked("[RECEIVED] [Client #%d - %s:%d] Received command: \"%s\"\n", ctx->client_id, ctx->client_ip, ctx->client_port, buffer);
 
         //sending end marker for empty commands to keep protocol synchronized
         if (strlen(buffer) == 0)
@@ -646,11 +647,11 @@ static void handle_client_session(ClientContext *ctx)
 
         if (strcmp(buffer, "exit") == 0)
         {
-            log_printf_locked("[INFO] Client requested exit.\n");
+            log_printf_locked("[INFO] [Client #%d - %s:%d] Client requested disconnect. Closing connection.\n", ctx->client_id, ctx->client_ip, ctx->client_port);
             break;
         }
 
-        log_printf_locked("[EXECUTING] Executing command: \"%s\"\n", buffer);
+        log_printf_locked("[EXECUTING] [Client #%d - %s:%d] Executing command: \"%s\"\n", ctx->client_id, ctx->client_ip, ctx->client_port, buffer);
 
         //handling obvious invalid single command names early
         if (strchr(buffer, '|') == NULL && is_invalid_single_command(buffer))
@@ -658,7 +659,7 @@ static void handle_client_session(ClientContext *ctx)
             char error_message[BUFFER_SIZE + 30];
 
             snprintf(error_message, sizeof(error_message), "Command not found: %s\n", buffer);
-            log_printf_locked("[ERROR] Command not found: \"%s\"\n", buffer);
+            log_printf_locked("[ERROR] [Client #%d - %s:%d] Command not found: \"%s\"\n", ctx->client_id, ctx->client_ip, ctx->client_port, buffer);
             log_printf_locked("[OUTPUT] Sending error message to client: \"Command not found: %s\"\n", buffer);
 
             if (send_all(ctx->client_fd, error_message, strlen(error_message)) < 0)
@@ -688,7 +689,7 @@ static void handle_client_session(ClientContext *ctx)
 
             if (cmd.command != NULL && is_builtin(cmd.command))
             {
-                if (execute_builtin_in_server(buffer, ctx->client_fd) < 0)
+                if (execute_builtin_in_server(buffer, ctx->client_fd, ctx) < 0)
                 {
                     break;
                 }
@@ -697,7 +698,7 @@ static void handle_client_session(ClientContext *ctx)
         }
 
         //running non-builtin commands through child capture path
-        if (execute_in_child_and_stream(buffer, ctx->client_fd) < 0)
+        if (execute_in_child_and_stream(buffer, ctx->client_fd, ctx) < 0)
         {
             break;
         }
