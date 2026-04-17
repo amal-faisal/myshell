@@ -165,7 +165,7 @@ static int server_command_exists(const char *cmd)
         return access(cmd, X_OK) == 0;
     }
 
-    char *path_env = getenv("PATH");
+    const char *path_env = getenv("PATH");
     if (path_env == NULL)
     {
         return 0;
@@ -175,7 +175,8 @@ static int server_command_exists(const char *cmd)
     strncpy(path_copy, path_env, sizeof(path_copy) - 1);
     path_copy[sizeof(path_copy) - 1] = '\0';
 
-    char *dir = strtok(path_copy, ":");
+    char *saveptr = NULL;
+    char *dir = strtok_r(path_copy, ":", &saveptr);
     while (dir != NULL)
     {
         char full_path[BUFFER_SIZE];
@@ -186,7 +187,7 @@ static int server_command_exists(const char *cmd)
             return 1;
         }
 
-        dir = strtok(NULL, ":");
+        dir = strtok_r(NULL, ":", &saveptr);
     }
 
     return 0;
@@ -432,6 +433,12 @@ static int execute_builtin_in_server_impl(char *input, int client_fd, ClientCont
             close(saved_stderr);
         }
 
+        //logging output stage even when builtin output was redirected to files
+        log_printf_locked("[OUTPUT] [Client #%d - %s:%d] Sending output to client:\n",
+                          ctx->client_id,
+                          ctx->client_ip,
+                          ctx->client_port);
+
         if (send_end_marker(client_fd) < 0)
         {
             return -1;
@@ -660,7 +667,11 @@ static void handle_client_session(ClientContext *ctx)
 
             snprintf(error_message, sizeof(error_message), "Command not found: %s\n", buffer);
             log_printf_locked("[ERROR] [Client #%d - %s:%d] Command not found: \"%s\"\n", ctx->client_id, ctx->client_ip, ctx->client_port, buffer);
-            log_printf_locked("[OUTPUT] Sending error message to client: \"Command not found: %s\"\n", buffer);
+            log_printf_locked("[OUTPUT] [Client #%d - %s:%d] Sending output to client:\n",
+                              ctx->client_id,
+                              ctx->client_ip,
+                              ctx->client_port);
+            log_printf_locked("%s", error_message);
 
             if (send_all(ctx->client_fd, error_message, strlen(error_message)) < 0)
             {
@@ -713,10 +724,7 @@ static void *client_worker_thread(void *arg)
     handle_client_session(ctx);
 
     close(ctx->client_fd);
-    log_printf_locked("[INFO] Client #%d disconnected from %s:%d.\n",
-                      ctx->client_id,
-                      ctx->client_ip,
-                      ctx->client_port);
+    log_printf_locked("[INFO] Client #%d disconnected.\n", ctx->client_id);
 
     free(ctx);
     return NULL;
