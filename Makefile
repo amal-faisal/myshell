@@ -10,8 +10,7 @@ TARGET = myshell
 
 # object files
 OBJS = myshell.o parser.o executor.o builtins.o
-SERVER_OBJS = parser.o executor.o builtins.o
-
+SERVER_OBJS = parser.o executor.o builtins.o scheduler_queue.o
 # default target - builds the executable
 all: $(TARGET)
 
@@ -35,6 +34,10 @@ executor.o: executor.c myshell.h
 builtins.o: builtins.c myshell.h
 	$(CC) $(CFLAGS) -c builtins.c
 
+scheduler_queue.o: scheduler_queue.c scheduler_queue.h server_shared.h
+	$(CC) $(CFLAGS) -c scheduler_queue.c
+
+
 # ===== SERVER TARGET (FIXED) =====
 server: server.c $(SERVER_OBJS)
 	$(CC) $(CFLAGS) -o server server.c $(SERVER_OBJS)
@@ -43,7 +46,8 @@ client: client.c
 	$(CC) $(CFLAGS) -o client client.c
 # cleaning build artifacts
 clean:
-	rm -f $(OBJS) $(TARGET) server client
+	rm -f $(OBJS) $(TARGET) server client scheduler_queue.o
+
 
 # rebuilding from scratch
 rebuild: clean all
