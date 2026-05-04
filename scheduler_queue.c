@@ -1,4 +1,5 @@
 #include "scheduler_queue.h"
+#include "scheduler.h"
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -105,6 +106,9 @@ void enqueue_task(Task *task)
 
     pthread_cond_signal(&queue_not_empty);
     pthread_mutex_unlock(&queue_mutex);
+    //notify scheduler that a new task arrived (may cause preemption)
+    //scheduler_notify_new_task is defined in scheduler.c
+    scheduler_notify_new_task(task);
 }
 
 Task *dequeue_task(void)

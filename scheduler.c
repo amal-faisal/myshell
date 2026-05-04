@@ -14,6 +14,13 @@ static SchedulerState g_scheduler = {0};
 //protecting scheduler state during concurrent updates
 static pthread_mutex_t scheduler_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+//preemption flag and trace buffer
+//protected by scheduler_mutex
+static int g_preempt_flag = 0;
+static int g_preempting_task_id = -1;
+static char g_trace[4096];
+static size_t g_trace_len = 0;
+
 //initializing scheduler state at startup
 void scheduler_init(void)
 {
@@ -370,30 +377,30 @@ void scheduler_log_decision(const char *event_type, Task *task)
     if (task == NULL || event_type == NULL)
         return;
 
-    //formatting log message based on event type with client ID and burst_time
+    //formatting log message based on event type with client ID and remaining_time
     if (strcmp(event_type, "created") == 0)
     {
         log_printf_locked("[%d]=== created (%d)\n", task->client_id, task->burst_time);
     }
     else if (strcmp(event_type, "started") == 0)
     {
-        log_printf_locked("[%d]=== started (%d)\n", task->client_id, task->burst_time);
+        log_printf_locked("[%d]=== started (%d)\n", task->client_id, task->remaining_time);
     }
     else if (strcmp(event_type, "waiting") == 0)
     {
-        log_printf_locked("[%d]=== waiting (%d)\n", task->client_id, task->burst_time);
+        log_printf_locked("[%d]=== waiting (%d)\n", task->client_id, task->remaining_time);
     }
     else if (strcmp(event_type, "running") == 0)
     {
-        log_printf_locked("[%d]=== running (%d)\n", task->client_id, task->burst_time);
+        log_printf_locked("[%d]=== running (%d)\n", task->client_id, task->remaining_time);
     }
     else if (strcmp(event_type, "ended") == 0)
     {
-        log_printf_locked("[%d]=== ended (%d)\n", task->client_id, task->burst_time);
+        log_printf_locked("[%d]=== ended (%d)\n", task->client_id, task->remaining_time);
     }
     else if (strcmp(event_type, "preempted") == 0)
     {
-        log_printf_locked("[%d]=== preempted (%d)\n", task->client_id, task->burst_time);
+        log_printf_locked("[%d]=== preempted (%d)\n", task->client_id, task->remaining_time);
     }
 }
 
@@ -471,4 +478,84 @@ void scheduler_resume_task(Task *task)
 
     //resuming task simply means selecting it again from queue
     //its remaining_time is already accurate from before preemption
+}
+
+//notify scheduler that a new task was enqueued (used to trigger preemption)
+void scheduler_notify_new_task(Task *new_task)
+{
+    pthread_mutex_lock(&scheduler_mutex);
+
+    //if there is a current running task, check if should preempt
+    if (g_scheduler.current_task != NULL && new_task != NULL)
+    {
+        if (scheduler_should_preempt(new_task, g_scheduler.current_task))
+        {
+            g_preempt_flag = 1;
+            g_preempting_task_id = new_task->task_id;
+        }
+    }
+
+    pthread_mutex_unlock(&scheduler_mutex);
+}
+
+//append execution trace entry (e.g. "P5-(3)")
+void scheduler_append_trace(int task_id, int seconds_run)
+{
+    pthread_mutex_lock(&scheduler_mutex);
+
+    if (g_trace_len + 32 < sizeof(g_trace))
+    {
+        if (g_trace_len != 0)
+        {
+            g_trace[g_trace_len++] = '-';
+        }
+        int n = snprintf(g_trace + g_trace_len, sizeof(g_trace) - g_trace_len, "P%d-(%d)", task_id, seconds_run);
+        if (n > 0) g_trace_len += (size_t)n;
+        g_trace[g_trace_len] = '\0';
+    }
+
+    pthread_mutex_unlock(&scheduler_mutex);
+}
+
+const char *scheduler_get_trace(void)
+{
+    return g_trace;
+}
+
+void scheduler_set_current_task(Task *task)
+{
+    pthread_mutex_lock(&scheduler_mutex);
+    g_scheduler.current_task = task;
+    pthread_mutex_unlock(&scheduler_mutex);
+}
+
+void scheduler_clear_current_task(void)
+{
+    pthread_mutex_lock(&scheduler_mutex);
+    g_scheduler.current_task = NULL;
+    pthread_mutex_unlock(&scheduler_mutex);
+}
+
+int scheduler_check_preempt(void)
+{
+    int v;
+    pthread_mutex_lock(&scheduler_mutex);
+    v = g_preempt_flag;
+    pthread_mutex_unlock(&scheduler_mutex);
+    return v;
+}
+
+void scheduler_clear_preempt(void)
+{
+    pthread_mutex_lock(&scheduler_mutex);
+    g_preempt_flag = 0;
+    g_preempting_task_id = -1;
+    pthread_mutex_unlock(&scheduler_mutex);
+}
+
+void scheduler_add_quantum_consumed(int inc)
+{
+    pthread_mutex_lock(&scheduler_mutex);
+    g_scheduler.quantum_consumed += inc;
+    pthread_mutex_unlock(&scheduler_mutex);
 }

@@ -6,6 +6,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <signal.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <errno.h>
@@ -52,6 +53,19 @@ void log_printf_locked(const char *fmt, ...)
     }
 
     pthread_mutex_unlock(&g_log_mutex);
+}
+
+static void handle_sigint(int sig)
+{
+    (void)sig;
+    log_printf_locked("\n[INFO] SIGINT received - printing scheduler summary\n");
+    scheduler_print_summary();
+    const char *trace = scheduler_get_trace();
+    if (trace && trace[0] != '\0')
+    {
+        log_printf_locked("[TRACE] %s\n", trace);
+    }
+    exit(0);
 }
 
 /* ---------- send helpers ---------- */
@@ -185,36 +199,88 @@ static void *scheduler_thread(void *arg)
             continue;
         }
 
+        //mark current task in scheduler state
+        scheduler_set_current_task(task);
+        scheduler_clear_preempt();
+
         //logging task execution start
         scheduler_log_decision("started", task);
 
-        //executing task and checking completion status
-        int completed = scheduler_execute_task(task);
-
-        if (completed)
+        //if shell, run to completion
+        if (task->type == TASK_SHELL)
         {
-            //task completed - send end marker to client
-            scheduler_log_decision("ended", task);
+            int completed = scheduler_execute_task(task);
 
+            if (completed)
+            {
+                scheduler_log_decision("ended", task);
+                int bytes_sent = send_end_marker(task->client_fd);
+                log_printf_locked("[%d]<<< %d bytes sent\n", task->client_id, bytes_sent);
+
+                sched->total_completed++;
+                sched->last_selected_task_id = -1;
+                free(task);
+            }
+            scheduler_clear_current_task();
+            continue;
+        }
+
+        //for demo tasks, run up to quantum_size seconds unless preempted or completed
+        int quantum = sched->quantum_size;
+        int seconds_run = 0;
+        int task_completed = 0;
+
+        for (int q = 0; q < quantum; q++)
+        {
+            //run one slice (1 second)
+            int slice_done = scheduler_execute_task(task);
+
+            //record trace and update quantum counters
+            scheduler_append_trace(task->task_id, 1);
+
+            scheduler_add_quantum_consumed(1);
+
+            //update task state after 1s
+            scheduler_update_task_after_execution(task, 1);
+
+            seconds_run++;
+
+            if (slice_done)
+            {
+                task_completed = 1;
+                break;
+            }
+
+            //check preemption
+            int preempt = scheduler_check_preempt();
+            if (preempt)
+            {
+                //log preempted and requeue
+                scheduler_log_decision("preempted", task);
+                break;
+            }
+        }
+
+        if (task_completed)
+        {
+            scheduler_log_decision("ended", task);
             int bytes_sent = send_end_marker(task->client_fd);
             log_printf_locked("[%d]<<< %d bytes sent\n", task->client_id, bytes_sent);
 
             sched->total_completed++;
-            sched->last_selected_task_id = -1;  //resetting for next task
-
+            sched->last_selected_task_id = -1;
             free(task);
         }
         else
         {
-            //task not completed - update state and requeue
-            scheduler_update_task_after_execution(task, 1);
-
+            //not completed (either preempted or quantum expired) -> requeue
             scheduler_log_decision("waiting", task);
-
-            sched->last_selected_task_id = task->task_id;  //tracking for next selection
-
+            sched->last_selected_task_id = task->task_id;
             enqueue_task(task);
         }
+
+        scheduler_clear_current_task();
+        scheduler_clear_preempt();
     }
 
     return NULL;
@@ -305,6 +371,7 @@ static void *client_worker_thread(void *arg)
 /* ---------- main ---------- */
 int main(int argc, char **argv)
 {
+    signal(SIGINT, handle_sigint);
     int server_fd;
     int port = PORT;
     int bound_port = PORT;

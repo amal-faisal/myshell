@@ -62,4 +62,25 @@ void scheduler_preempt_task(Task *task);
 //marking task as resumed after preemption
 void scheduler_resume_task(Task *task);
 
+//notify scheduler that a new task was enqueued (used to trigger preemption)
+void scheduler_notify_new_task(Task *new_task);
+
+//append execution trace entry (e.g. "P5-(3)")
+void scheduler_append_trace(int task_id, int seconds_run);
+
+//get trace string (owned by scheduler)
+const char *scheduler_get_trace(void);
+
+//set/clear current task (scheduler-managed)
+void scheduler_set_current_task(Task *task);
+void scheduler_clear_current_task(void);
+
+//check if preempt flag is set (non-zero) without clearing
+int scheduler_check_preempt(void);
+
+//clear preempt flag
+void scheduler_clear_preempt(void);
+//increment quantum consumed counter
+void scheduler_add_quantum_consumed(int inc);
+
 #endif
