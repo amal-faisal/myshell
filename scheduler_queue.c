@@ -234,6 +234,18 @@ Task *peek_best_task_sjrf(int last_selected_task_id)
 
     //pass 2: looking for demo with shortest remaining time
     //using FCFS (arrival_order) for tie-breaking
+
+    //count demo tasks so we only skip last_selected when there is
+    //more than one demo task in the queue
+    int demo_count = 0;
+    curr = queue_head;
+    while (curr != NULL)
+    {
+        if (curr->type == TASK_DEMO_PROGRAM)
+            demo_count++;
+        curr = curr->next;
+    }
+
     int shortest_time = INT_MAX;
     curr = queue_head;
 
@@ -241,15 +253,16 @@ Task *peek_best_task_sjrf(int last_selected_task_id)
     {
         if (curr->type == TASK_DEMO_PROGRAM)
         {
-            //skip if this is the same task as last selection (unless it's the only one)
-            if (curr->task_id == last_selected_task_id && queue_head->next != NULL)
+            //skip the previously selected task only when another demo
+            //task exists; if it is the sole demo task, allow reselection
+            if (curr->task_id == last_selected_task_id && demo_count > 1)
             {
                 curr = curr->next;
                 continue;
             }
 
             //selecting if shorter, or same time but earlier arrival
-            if (selected == NULL || 
+            if (selected == NULL ||
                 curr->remaining_time < shortest_time ||
                 (curr->remaining_time == shortest_time && curr->arrival_order < selected->arrival_order))
             {
