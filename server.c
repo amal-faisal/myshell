@@ -191,14 +191,15 @@ static void *scheduler_thread(void *arg)
 
         if (task == NULL)
         {
-            //queue is empty: print summary + trace if new tasks completed
-            //since the last time we printed
+            //queue is empty: only print summary when demo tasks ran (trace
+            //is non-empty); shell-only scenarios produce no trace so no
+            //summary is shown, matching the expected sample output
             if (sched->total_completed > last_printed_total)
             {
-                scheduler_print_summary();
                 const char *trace = scheduler_get_trace();
                 if (trace && trace[0] != '\0')
                 {
+                    scheduler_print_summary();
                     log_printf_locked("[TRACE] %s\n", trace);
                 }
                 last_printed_total = sched->total_completed;
