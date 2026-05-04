@@ -61,7 +61,7 @@ static void handle_sigint(int sig)
     const char *trace = scheduler_get_trace();
     if (trace && trace[0] != '\0')
     {
-        log_printf_locked("[TRACE] %s\n", trace);
+        log_printf_locked("[0] %s\n", trace);
     }
     exit(0);
 }
@@ -197,7 +197,7 @@ static void *scheduler_thread(void *arg)
                 const char *trace = scheduler_get_trace();
                 if (trace && trace[0] != '\0')
                 {
-                    log_printf_locked("[TRACE] %s\n", trace);
+                    log_printf_locked("[0] %s\n", trace);
                 }
                 last_printed_total = sched->total_completed;
             }
@@ -228,15 +228,15 @@ static void *scheduler_thread(void *arg)
             int completed = scheduler_execute_task(task);
 
             if (completed)
-            {
-                scheduler_log_decision("ended", task);
-                int bytes_sent = send_end_marker(task->client_fd);
-                log_printf_locked("[%d]<<< %d bytes sent\n", task->client_id, bytes_sent);
+{
+    int bytes_sent = send_end_marker(task->client_fd);
+    log_printf_locked("[%d]<<< %d bytes sent\n", task->client_id, bytes_sent);
+    scheduler_log_decision("ended", task);
 
-                sched->total_completed++;
-                sched->last_selected_task_id = -1;
-                free(task);
-            }
+    sched->total_completed++;
+    sched->last_selected_task_id = -1;
+    free(task);
+}
             scheduler_clear_current_task();
             continue;
         }
@@ -246,6 +246,7 @@ static void *scheduler_thread(void *arg)
         int quantum = (task->round_count == 0) ? 3 : 7;
         int task_completed = 0;
         int preempted_flag = 0;
+        int time_before_run = sched->total_time_used;
 
         for (int q = 0; q < quantum; q++)
         {
@@ -271,22 +272,24 @@ static void *scheduler_thread(void *arg)
 
         //record one trace entry per quantum run using the cumulative CPU time
         //and the client id (shown as "P<client_id>-(<total_time>)" in output)
-        scheduler_append_trace(task->client_id, sched->total_time_used);
-
+        if (sched->total_time_used > time_before_run)
+{
+    scheduler_append_trace(task->client_id, sched->total_time_used);
+}
         //advance this task's personal round counter after each quantum run
         //so the next scheduling correctly picks the 7-second quantum
         task->round_count++;
 
         if (task_completed)
-        {
-            scheduler_log_decision("ended", task);
-            int bytes_sent = send_end_marker(task->client_fd);
-            log_printf_locked("[%d]<<< %d bytes sent\n", task->client_id, bytes_sent);
+{
+    int bytes_sent = send_end_marker(task->client_fd);
+    log_printf_locked("[%d]<<< %d bytes sent\n", task->client_id, bytes_sent);
+    scheduler_log_decision("ended", task);
 
-            sched->total_completed++;
-            sched->last_selected_task_id = -1;
-            free(task);
-        }
+    sched->total_completed++;
+    sched->last_selected_task_id = -1;
+    free(task);
+}
         else if (preempted_flag)
         {
             //preempted by a shorter incoming task — log distinctly from
