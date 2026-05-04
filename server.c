@@ -1,6 +1,7 @@
 #include "myshell.h"
 #include "server_shared.h"
 #include "scheduler_queue.h"
+#include "scheduler.h"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -76,7 +77,10 @@ int send_all(int sockfd, const char *buffer, size_t length)
 
 int send_end_marker(int client_fd)
 {
-    return send_all(client_fd, END_MARKER, strlen(END_MARKER));
+    int result = send_all(client_fd, END_MARKER, strlen(END_MARKER));
+    if (result < 0)
+        return -1;
+    return strlen(END_MARKER);
 }
 
 /* ---------- client id ---------- */
@@ -158,46 +162,59 @@ static void *scheduler_thread(void *arg)
 {
     (void)arg;
 
+    scheduler_init();
+
+    //getting the scheduler state to track last selected task
+    SchedulerState *sched = scheduler_get_state();
+
     while (1)
     {
-        Task *task = dequeue_task();
+        //selecting next task based on SJRF priority
+        Task *task = peek_best_task_sjrf(sched->last_selected_task_id);
 
         if (task == NULL)
+        {
+            usleep(100000);  //sleeping 100ms to avoid busy-waiting
             continue;
-
-        log_printf_locked(
-            "[SCHEDULER] Picked Task #%d from Client #%d\n",
-            task->task_id,
-            task->client_id);
-
-        /* temporary behavior until Person 2 finishes */
-
-        if (task->type == TASK_SHELL)
-        {
-            char msg[BUFFER_SIZE];
-            snprintf(msg,
-         sizeof(msg),
-         "Shell task queued.\nCommand: %.3500s\n",
-         task->command);
-            send_all(task->client_fd, msg, strlen(msg));
-            send_end_marker(task->client_fd);
-        }
-        else if (task->type == TASK_DEMO_PROGRAM)
-        {
-            char msg[BUFFER_SIZE];
-
-            snprintf(msg,
-         sizeof(msg),
-         "Demo/program task queued.\nCommand: %.3400s\nBurst=%d | Remaining=%d\n",
-         task->command,
-         task->burst_time,
-         task->remaining_time);
-
-            send_all(task->client_fd, msg, strlen(msg));
-            send_end_marker(task->client_fd);
         }
 
-        free(task);
+        //removing selected task from queue before executing
+        if (!dequeue_task_by_id(task->task_id))
+        {
+            //task was already removed (shouldn't happen, but handle gracefully)
+            continue;
+        }
+
+        //logging task execution start
+        scheduler_log_decision("started", task);
+
+        //executing task and checking completion status
+        int completed = scheduler_execute_task(task);
+
+        if (completed)
+        {
+            //task completed - send end marker to client
+            scheduler_log_decision("ended", task);
+
+            int bytes_sent = send_end_marker(task->client_fd);
+            log_printf_locked("[%d]<<< %d bytes sent\n", task->client_id, bytes_sent);
+
+            sched->total_completed++;
+            sched->last_selected_task_id = -1;  //resetting for next task
+
+            free(task);
+        }
+        else
+        {
+            //task not completed - update state and requeue
+            scheduler_update_task_after_execution(task, 1);
+
+            scheduler_log_decision("waiting", task);
+
+            sched->last_selected_task_id = task->task_id;  //tracking for next selection
+
+            enqueue_task(task);
+        }
     }
 
     return NULL;
@@ -230,12 +247,7 @@ static void handle_client_session(ClientContext *ctx)
         buffer[bytes_received] = '\0';
         buffer[strcspn(buffer, "\n")] = '\0';
 
-        log_printf_locked(
-            "[RECEIVED] [Client #%d - %s:%d] Received command: \"%s\"\n",
-            ctx->client_id,
-            ctx->client_ip,
-            ctx->client_port,
-            buffer);
+        log_printf_locked("[%d]>>> %s\n", ctx->client_id, buffer);
 
         if (strlen(buffer) == 0)
         {
@@ -266,16 +278,9 @@ static void handle_client_session(ClientContext *ctx)
         enqueue_task(task);
 
         log_printf_locked(
-            "[QUEUED] [Client #%d - %s:%d] Task #%d queued: \"%s\" | burst=%d | remaining=%d\n",
+            "[%d]=== created (%d)\n",
             ctx->client_id,
-            ctx->client_ip,
-            ctx->client_port,
-            task->task_id,
-            task->command,
-            task->burst_time,
-            task->remaining_time);
-
-        print_queue_snapshot();
+            task->burst_time);
     }
 }
 
@@ -443,11 +448,8 @@ int main(int argc, char **argv)
         }
 
         log_printf_locked(
-            "[INFO] Client #%d connected from %s:%d. Assigned to Thread-%d.\n",
-            ctx->client_id,
-            ctx->client_ip,
-            ctx->client_port,
-            ctx->thread_index);
+            "[%d]<<< client connected\n",
+            ctx->client_id);
 
         if (pthread_create(&worker_tid,
                            NULL,

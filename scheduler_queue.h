@@ -36,6 +36,14 @@ Task *create_task_from_command(ClientContext *ctx, const char *command);
 void enqueue_task(Task *task);
 Task *dequeue_task(void);
 
+//removing specific task from queue based on task_id
+//returns 1 if task was found and removed, 0 if not found
+int dequeue_task_by_id(int task_id);
+
+//returning best task in queue based on SJRF priority (without removing)
+//caller should call dequeue_task_by_id to actually remove it
+Task *peek_best_task_sjrf(int last_selected_task_id);
+
 void remove_tasks_for_client(int client_id);
 
 int queue_is_empty(void);

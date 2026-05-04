@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 static Task *queue_head = NULL;
 static Task *queue_tail = NULL;
@@ -130,6 +131,105 @@ Task *dequeue_task(void)
     pthread_mutex_unlock(&queue_mutex);
 
     return task;
+}
+
+//removing specific task from queue by task_id
+//returns 1 if task was removed, 0 if not found  
+int dequeue_task_by_id(int task_id)
+{
+    pthread_mutex_lock(&queue_mutex);
+
+    Task *curr = queue_head;
+    Task *prev = NULL;
+
+    //finding the task with matching task_id
+    while (curr != NULL)
+    {
+        if (curr->task_id == task_id)
+        {
+            //found it - removing from queue
+            if (prev == NULL)
+            {
+                //removing from head
+                queue_head = curr->next;
+            }
+            else
+            {
+                //removing from middle
+                prev->next = curr->next;
+            }
+
+            //updating tail if necessary
+            if (queue_tail == curr)
+            {
+                queue_tail = prev;
+            }
+
+            curr->next = NULL;
+
+            pthread_mutex_unlock(&queue_mutex);
+            return 1;
+        }
+
+        prev = curr;
+        curr = curr->next;
+    }
+
+    //task not found
+    pthread_mutex_unlock(&queue_mutex);
+    return 0;
+}
+
+//returning best task based on SJRF priority (without removing it)
+Task *peek_best_task_sjrf(int last_selected_task_id)
+{
+    pthread_mutex_lock(&queue_mutex);
+
+    Task *selected = NULL;
+    Task *curr = queue_head;
+
+    //pass 1: looking for shell commands (highest priority)
+    while (curr != NULL)
+    {
+        if (curr->type == TASK_SHELL && curr->burst_time == -1)
+        {
+            selected = curr;
+            pthread_mutex_unlock(&queue_mutex);
+            return selected;
+        }
+        curr = curr->next;
+    }
+
+    //pass 2: looking for demo with shortest remaining time
+    //using FCFS (arrival_order) for tie-breaking
+    int shortest_time = INT_MAX;
+    curr = queue_head;
+
+    while (curr != NULL)
+    {
+        if (curr->type == TASK_DEMO_PROGRAM)
+        {
+            //skip if this is the same task as last selection (unless it's the only one)
+            if (curr->task_id == last_selected_task_id && queue_head->next != NULL)
+            {
+                curr = curr->next;
+                continue;
+            }
+
+            //selecting if shorter, or same time but earlier arrival
+            if (selected == NULL || 
+                curr->remaining_time < shortest_time ||
+                (curr->remaining_time == shortest_time && curr->arrival_order < selected->arrival_order))
+            {
+                shortest_time = curr->remaining_time;
+                selected = curr;
+            }
+        }
+        curr = curr->next;
+    }
+
+    pthread_mutex_unlock(&queue_mutex);
+    return selected;
 }
 
 void remove_tasks_for_client(int client_id)
