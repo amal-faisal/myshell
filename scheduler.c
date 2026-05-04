@@ -403,27 +403,27 @@ void scheduler_log_decision(const char *event_type, Task *task)
     //formatting log message based on event type with client ID and remaining_time
     if (strcmp(event_type, "created") == 0)
     {
-        log_printf_locked("[%d]=== created (%d)\n", task->client_id, task->burst_time);
+        log_printf_locked("(%d)--- created (%d)\n", task->client_id, task->burst_time);
     }
     else if (strcmp(event_type, "started") == 0)
     {
-        log_printf_locked("[%d]=== started (%d)\n", task->client_id, task->remaining_time);
+        log_printf_locked("(%d)--- started (%d)\n", task->client_id, task->remaining_time);
     }
     else if (strcmp(event_type, "waiting") == 0)
     {
-        log_printf_locked("[%d]=== waiting (%d)\n", task->client_id, task->remaining_time);
+        log_printf_locked("(%d)--- waiting (%d)\n", task->client_id, task->remaining_time);
     }
     else if (strcmp(event_type, "running") == 0)
     {
-        log_printf_locked("[%d]=== running (%d)\n", task->client_id, task->remaining_time);
+        log_printf_locked("(%d)--- running (%d)\n", task->client_id, task->remaining_time);
     }
     else if (strcmp(event_type, "ended") == 0)
     {
-        log_printf_locked("[%d]=== ended (%d)\n", task->client_id, task->remaining_time);
+        log_printf_locked("(%d)--- ended (%d)\n", task->client_id, task->remaining_time);
     }
     else if (strcmp(event_type, "preempted") == 0)
     {
-        log_printf_locked("[%d]=== preempted (%d)\n", task->client_id, task->remaining_time);
+        log_printf_locked("(%d)--- preempted (%d)\n", task->client_id, task->remaining_time);
     }
 }
 

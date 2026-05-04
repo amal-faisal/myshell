@@ -368,7 +368,7 @@ static void handle_client_session(ClientContext *ctx)
         enqueue_task(task);
 
         log_printf_locked(
-            "[%d]=== created (%d)\n",
+            "(%d)--- created (%d)\n",
             ctx->client_id,
             task->burst_time);
     }
