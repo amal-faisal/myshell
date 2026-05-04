@@ -229,9 +229,9 @@ static void *scheduler_thread(void *arg)
 
             if (completed)
 {
-    int bytes_sent = send_end_marker(task->client_fd);
-    log_printf_locked("[%d]<<< %d bytes sent\n", task->client_id, bytes_sent);
-    scheduler_log_decision("ended", task);
+    send_end_marker(task->client_fd);
+log_printf_locked("[%d]<<< %d bytes sent\n", task->client_id, task->bytes_sent);
+scheduler_log_decision("ended", task);
 
     sched->total_completed++;
     sched->last_selected_task_id = -1;
@@ -282,10 +282,9 @@ static void *scheduler_thread(void *arg)
 
         if (task_completed)
 {
-    int bytes_sent = send_end_marker(task->client_fd);
-    log_printf_locked("[%d]<<< %d bytes sent\n", task->client_id, bytes_sent);
-    scheduler_log_decision("ended", task);
-
+   send_end_marker(task->client_fd);
+log_printf_locked("[%d]<<< %d bytes sent\n", task->client_id, task->bytes_sent);
+scheduler_log_decision("ended", task);
     sched->total_completed++;
     sched->last_selected_task_id = -1;
     free(task);

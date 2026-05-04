@@ -19,15 +19,15 @@ int main(int argc, char *argv[])
     }
 
     for (int i = 0; i <= seconds; i++)
-{
-    printf("Demo %d/%d\n", i, seconds);
-    fflush(stdout);
-
-    if (i < seconds)
     {
-        sleep(1);
+        printf("Demo %d/%d\n", i, seconds);
+        fflush(stdout);
+
+        if (i < seconds)
+        {
+            sleep(1);
+        }
     }
-}
 
     return 0;
 }
