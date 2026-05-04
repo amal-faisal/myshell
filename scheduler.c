@@ -309,15 +309,15 @@ int scheduler_execute_task(Task *task)
             int status;
             waitpid(pid, &status, 0);
 
-            //task completes on the iteration where remaining_time reaches 0
-            //remaining_time > 0 means more work; == 0 means this was the last slice
-            if (task->remaining_time > 0)
+            //detect completion before the update decrements remaining_time:
+            //remaining_time <= 1 means this slice is the last one
+            if (task->remaining_time <= 1)
             {
-                return 0;
+                return 1;
             }
             else
             {
-                return 1;
+                return 0;
             }
         }
     }
