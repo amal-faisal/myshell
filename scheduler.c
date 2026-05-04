@@ -279,6 +279,44 @@ int scheduler_execute_task(Task *task)
 
     //demo/program tasks run for quantum or until completion
     if (task->type == TASK_DEMO_PROGRAM)
+{
+    pid_t pid = fork();
+
+    if (pid < 0)
+    {
+        perror("fork");
+        return 0;
+    }
+
+    if (pid == 0)
+    {
+        int current_iteration = task->burst_time - task->remaining_time;
+
+        dprintf(task->client_fd,
+                "Demo %d/%d\n",
+                current_iteration,
+                task->burst_time);
+
+        if (task->remaining_time > 0)
+        {
+            sleep(1);
+        }
+
+        _exit(0);
+    }
+    else
+    {
+        int status;
+        waitpid(pid, &status, 0);
+
+        if (task->remaining_time == 0)
+        {
+            return 1;
+        }
+
+        return 0;
+    }
+}
     {
         //forking child process to run demo task's one-second slice
         pid_t pid = fork();
