@@ -1,6 +1,7 @@
 #include "scheduler_queue.h"
-#include "scheduler.h"
 #include <pthread.h>
+
+extern void scheduler_notify_new_task(Task *new_task);
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,7 +22,8 @@ static int parse_demo_command(const char *command, int *n_out)
     int n;
     char extra[64];
 
-    if (sscanf(command, "demo %d %63s", &n, extra) == 1 && n > 0)
+    if ((sscanf(command, "demo %d %63s", &n, extra) == 1 ||
+         sscanf(command, "./demo %d %63s", &n, extra) == 1) && n > 0)
     {
         *n_out = n;
         return 1;
@@ -109,6 +111,32 @@ void enqueue_task(Task *task)
     //notify scheduler that a new task arrived (may cause preemption)
     //scheduler_notify_new_task is defined in scheduler.c
     scheduler_notify_new_task(task);
+}
+
+void enqueue_task_requeue(Task *task)
+{
+    if (task == NULL)
+    {
+        return;
+    }
+
+    pthread_mutex_lock(&queue_mutex);
+
+    task->next = NULL;
+
+    if (queue_tail == NULL)
+    {
+        queue_head = task;
+        queue_tail = task;
+    }
+    else
+    {
+        queue_tail->next = task;
+        queue_tail = task;
+    }
+
+    pthread_cond_signal(&queue_not_empty);
+    pthread_mutex_unlock(&queue_mutex);
 }
 
 Task *dequeue_task(void)

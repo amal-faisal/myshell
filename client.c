@@ -241,7 +241,7 @@ int main(int argc, char **argv)
     }
 
     //protecting client from hanging forever if server stops responding mid-session
-    timeout.tv_sec = 5;
+    timeout.tv_sec = 60;
     timeout.tv_usec = 0;
     if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0)
     {

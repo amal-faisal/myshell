@@ -34,6 +34,7 @@ typedef struct Task
 Task *create_task_from_command(ClientContext *ctx, const char *command);
 
 void enqueue_task(Task *task);
+void enqueue_task_requeue(Task *task);
 Task *dequeue_task(void);
 
 //removing specific task from queue based on task_id

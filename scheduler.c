@@ -291,11 +291,11 @@ int scheduler_execute_task(Task *task)
         if (pid == 0)
         {
             //child process - running one iteration of demo task
-            //calculating which iteration this is (burst_time - remaining_time + 1)
-            int current_iteration = task->burst_time - task->remaining_time + 1;
+            //calculating which iteration this is (0-based: burst_time - remaining_time)
+            int current_iteration = task->burst_time - task->remaining_time;
 
             //outputting demo progress in format: Demo X/Y
-            dprintf(task->client_fd, "Demo %d/%d\n", 
+            dprintf(task->client_fd, "Demo %d/%d\n",
                     current_iteration, task->burst_time);
 
             //sleeping 1 second to simulate work
@@ -309,16 +309,14 @@ int scheduler_execute_task(Task *task)
             int status;
             waitpid(pid, &status, 0);
 
-            //returning completion status based on remaining time
-            //will be updated by scheduler_update_task_after_execution
-            if (task->remaining_time > 1)
+            //task completes on the iteration where remaining_time reaches 0
+            //remaining_time > 0 means more work; == 0 means this was the last slice
+            if (task->remaining_time > 0)
             {
-                //more work to do - task needs requeue
                 return 0;
             }
             else
             {
-                //task completed (remaining_time will be 0 after update)
                 return 1;
             }
         }
@@ -335,7 +333,10 @@ void scheduler_update_task_after_execution(Task *task, int time_used)
 
     pthread_mutex_lock(&scheduler_mutex);
 
-    //reducing remaining time
+    //decrement remaining time and accumulate total CPU time together so that
+    //the final "Demo N/N" slice (remaining == 0 on entry) is not counted in
+    //total_time_used; this keeps the execution trace numbers consistent with
+    //the expected output (e.g. P6-(22) not P6-(23) for a 12-unit demo)
     if (task->remaining_time > 0)
     {
         task->remaining_time -= time_used;
@@ -344,29 +345,13 @@ void scheduler_update_task_after_execution(Task *task, int time_used)
         {
             task->remaining_time = 0;
         }
+
+        g_scheduler.total_time_used += time_used;
     }
 
-    //incrementing round count
-    task->round_count++;
-
-    //updating global time
-    g_scheduler.total_time_used += time_used;
-
-    //checking if we need to advance round
-    if (g_scheduler.quantum_consumed >= g_scheduler.quantum_size)
-    {
-        //moving to next round
-        g_scheduler.round_number++;
-
-        //setting quantum for round 2+ to 7 seconds
-        if (g_scheduler.round_number > 1)
-        {
-            g_scheduler.quantum_size = 7;
-        }
-
-        //resetting quantum consumed
-        g_scheduler.quantum_consumed = 0;
-    }
+    //round_count is incremented once per quantum run in scheduler_thread,
+    //not per second here, so that the per-task quantum (3 first, 7 after)
+    //is computed correctly
 
     pthread_mutex_unlock(&scheduler_mutex);
 }

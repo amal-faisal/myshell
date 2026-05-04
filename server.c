@@ -171,15 +171,18 @@ static void write_port_hint_file(int port)
     fclose(fp);
 }
 
-/* ---------- scheduler stub ---------- */
+/* ---------- scheduler thread ---------- */
 static void *scheduler_thread(void *arg)
 {
     (void)arg;
 
     scheduler_init();
 
-    //getting the scheduler state to track last selected task
     SchedulerState *sched = scheduler_get_state();
+
+    //tracks how many completions have already been summarised so the
+    //summary prints exactly once each time the queue drains
+    int last_printed_total = 0;
 
     while (1)
     {
@@ -188,25 +191,40 @@ static void *scheduler_thread(void *arg)
 
         if (task == NULL)
         {
-            usleep(100000);  //sleeping 100ms to avoid busy-waiting
+            //queue is empty: print summary + trace if new tasks completed
+            //since the last time we printed
+            if (sched->total_completed > last_printed_total)
+            {
+                scheduler_print_summary();
+                const char *trace = scheduler_get_trace();
+                if (trace && trace[0] != '\0')
+                {
+                    log_printf_locked("[TRACE] %s\n", trace);
+                }
+                last_printed_total = sched->total_completed;
+            }
+            usleep(100000);
             continue;
         }
 
         //removing selected task from queue before executing
         if (!dequeue_task_by_id(task->task_id))
         {
-            //task was already removed (shouldn't happen, but handle gracefully)
+            //task was already removed (rare race, skip gracefully)
             continue;
         }
 
-        //mark current task in scheduler state
         scheduler_set_current_task(task);
         scheduler_clear_preempt();
 
-        //logging task execution start
-        scheduler_log_decision("started", task);
+        //first scheduling logs "started"; subsequent schedulings log "running"
+        //shell tasks always log "started" (they complete in a single round)
+        if (task->round_count == 0)
+            scheduler_log_decision("started", task);
+        else
+            scheduler_log_decision("running", task);
 
-        //if shell, run to completion
+        //shell commands run to completion in one go with highest priority
         if (task->type == TASK_SHELL)
         {
             int completed = scheduler_execute_task(task);
@@ -225,25 +243,19 @@ static void *scheduler_thread(void *arg)
             continue;
         }
 
-        //for demo tasks, run up to quantum_size seconds unless preempted or completed
-        int quantum = sched->quantum_size;
-        int seconds_run = 0;
+        //demo tasks: per-task quantum — 3 seconds on first scheduling,
+        //7 seconds on every subsequent scheduling (per-task, not global)
+        int quantum = (task->round_count == 0) ? 3 : 7;
         int task_completed = 0;
+        int preempted_flag = 0;
 
         for (int q = 0; q < quantum; q++)
         {
-            //run one slice (1 second)
+            //run one 1-second slice; returns 1 when task is fully done
             int slice_done = scheduler_execute_task(task);
 
-            //record trace and update quantum counters
-            scheduler_append_trace(task->task_id, 1);
-
-            scheduler_add_quantum_consumed(1);
-
-            //update task state after 1s
+            //update remaining time and cumulative global time in state
             scheduler_update_task_after_execution(task, 1);
-
-            seconds_run++;
 
             if (slice_done)
             {
@@ -251,15 +263,21 @@ static void *scheduler_thread(void *arg)
                 break;
             }
 
-            //check preemption
-            int preempt = scheduler_check_preempt();
-            if (preempt)
+            //check if a higher-priority task arrived and set the preempt flag
+            if (scheduler_check_preempt())
             {
-                //log preempted and requeue
-                scheduler_log_decision("preempted", task);
+                preempted_flag = 1;
                 break;
             }
         }
+
+        //record one trace entry per quantum run using the cumulative CPU time
+        //and the client id (shown as "P<client_id>-(<total_time>)" in output)
+        scheduler_append_trace(task->client_id, sched->total_time_used);
+
+        //advance this task's personal round counter after each quantum run
+        //so the next scheduling correctly picks the 7-second quantum
+        task->round_count++;
 
         if (task_completed)
         {
@@ -271,12 +289,20 @@ static void *scheduler_thread(void *arg)
             sched->last_selected_task_id = -1;
             free(task);
         }
+        else if (preempted_flag)
+        {
+            //preempted by a shorter incoming task — log distinctly from
+            //"waiting" (quantum expiry) so the server log matches spec output
+            scheduler_log_decision("preempted", task);
+            sched->last_selected_task_id = task->task_id;
+            enqueue_task_requeue(task);
+        }
         else
         {
-            //not completed (either preempted or quantum expired) -> requeue
+            //quantum expired — task goes back to the queue for the next round
             scheduler_log_decision("waiting", task);
             sched->last_selected_task_id = task->task_id;
-            enqueue_task(task);
+            enqueue_task_requeue(task);
         }
 
         scheduler_clear_current_task();
@@ -466,7 +492,7 @@ int main(int argc, char **argv)
 
     pthread_detach(sched_tid);
 
-    log_printf_locked("[INFO] Server started, waiting for client connections...\n");
+    log_printf_locked("------------------------------\n| Hello, Server Started |\n------------------------------\n\n");
 
     while (1)
     {
