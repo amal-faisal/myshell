@@ -58,8 +58,6 @@ void log_printf_locked(const char *fmt, ...)
 static void handle_sigint(int sig)
 {
     (void)sig;
-    log_printf_locked("\n[INFO] SIGINT received - printing scheduler summary\n");
-    scheduler_print_summary();
     const char *trace = scheduler_get_trace();
     if (trace && trace[0] != '\0')
     {
@@ -199,7 +197,6 @@ static void *scheduler_thread(void *arg)
                 const char *trace = scheduler_get_trace();
                 if (trace && trace[0] != '\0')
                 {
-                    scheduler_print_summary();
                     log_printf_locked("[TRACE] %s\n", trace);
                 }
                 last_printed_total = sched->total_completed;
